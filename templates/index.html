@@ -1,0 +1,14 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Loans Summary</h1>
+<table class="loans">
+  <tr><th>Child</th><th>Original Amount</th><th>Balance</th></tr>
+  {% for loan in loans %}
+  <tr>
+    <td><a href="{{ url_for('loan_details', loan_id=loan.id) }}">{{ loan.child }}</a></td>
+    <td>{{ '%.2f'|format(loan.principal) }}</td>
+    <td>{{ '%.2f'|format(loan.balance) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

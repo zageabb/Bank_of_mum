@@ -1,0 +1,20 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Loan to {{ loan.child }}</h1>
+<p>Original amount: {{ '%.2f'|format(loan.principal) }}</p>
+<p>Current balance: {{ '%.2f'|format(balance) }}</p>
+<p>
+  <a href="{{ url_for('add_payment', loan_id=loan.id) }}">Add payment</a> |
+  <a href="{{ url_for('download_loan', loan_id=loan.id) }}">Download JSON</a>
+</p>
+<table class="payments">
+  <tr><th>Date</th><th>Payment</th><th>Remaining</th></tr>
+  {% for p in payments %}
+  <tr>
+    <td>{{ p.date }}</td>
+    <td>{{ '%.2f'|format(p.amount) }}</td>
+    <td>{{ '%.2f'|format(p.balance) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
