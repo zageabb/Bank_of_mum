@@ -103,6 +103,37 @@ def add_loan():
     return render_template('add_loan.html')
 
 
+@app.route('/loan/<loan_id>/edit', methods=['GET', 'POST'])
+def edit_loan(loan_id):
+    loan = load_loan(loan_id)
+    if request.method == 'POST':
+        principal = float(request.form.get('principal', loan['principal']))
+        rate = float(request.form.get('rate', 0) or 0)
+        months = request.form.get('months')
+        payment = request.form.get('payment')
+
+        months = int(months) if months else None
+        payment = float(payment) if payment else None
+
+        if months and not payment:
+            payment = calculate_monthly_payment(principal, rate, months)
+        elif payment and not months:
+            months = math.ceil(calculate_months(principal, rate, payment))
+        elif not months and not payment:
+            months = loan.get('months', 0)
+            payment = loan.get('payment_per_month', 0)
+
+        loan.update({
+            'principal': principal,
+            'interest_rate': rate,
+            'months': months,
+            'payment_per_month': payment
+        })
+        save_loan(loan)
+        return redirect(url_for('loan_details', loan_id=loan_id))
+    return render_template('edit_loan.html', loan=loan)
+
+
 @app.route('/loan/<loan_id>')
 def loan_details(loan_id):
     loan = load_loan(loan_id)
@@ -114,6 +145,7 @@ def loan_details(loan_id):
             'date': p['date'],
             'amount': p['amount'],
             'balance': balance,
+            'comment': p.get('comment', ''),
             'index': idx
         })
     return render_template('loan_details.html', loan=loan, payments=payment_rows, balance=balance)
@@ -125,7 +157,8 @@ def add_payment(loan_id):
     if request.method == 'POST':
         amount = float(request.form['amount'])
         pay_date = request.form['date'] or date.today().isoformat()
-        loan.setdefault('payments', []).append({'date': pay_date, 'amount': amount})
+        comment = request.form.get('comment', '')
+        loan.setdefault('payments', []).append({'date': pay_date, 'amount': amount, 'comment': comment})
         save_loan(loan)
         return redirect(url_for('loan_details', loan_id=loan_id))
     today = date.today().isoformat()
@@ -142,8 +175,10 @@ def edit_payment(loan_id, payment_index):
     if request.method == 'POST':
         payment['amount'] = float(request.form['amount'])
         payment['date'] = request.form['date']
+        payment['comment'] = request.form.get('comment', '')
         save_loan(loan)
         return redirect(url_for('loan_details', loan_id=loan_id))
+    payment.setdefault('comment', '')
     return render_template('edit_payment.html', loan=loan, payment=payment)
 
 
