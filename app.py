@@ -1,5 +1,6 @@
 import os
 import json
+import math
 from datetime import date
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory
 
@@ -7,6 +8,22 @@ app = Flask(__name__)
 
 DATA_DIR = os.path.join(app.root_path, 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def calculate_monthly_payment(principal, annual_rate, months):
+    """Calculate the payment per month for a compound interest loan."""
+    r = annual_rate / 12 / 100
+    if r == 0:
+        return principal / months
+    return principal * r / (1 - (1 + r) ** -months)
+
+
+def calculate_months(principal, annual_rate, payment):
+    """Calculate number of months needed to pay off a loan."""
+    r = annual_rate / 12 / 100
+    if r == 0:
+        return principal / payment
+    return math.log(payment / (payment - principal * r)) / math.log(1 + r)
 
 def load_loans():
     loans = []
@@ -17,6 +34,9 @@ def load_loans():
                 loan = json.load(f)
             loan_id = os.path.splitext(filename)[0]
             loan['id'] = loan_id
+            loan.setdefault('interest_rate', 0)
+            loan.setdefault('months', 0)
+            loan.setdefault('payment_per_month', 0)
             loan['balance'] = loan['principal'] - sum(p['amount'] for p in loan.get('payments', []))
             loans.append(loan)
     return loans
@@ -27,6 +47,9 @@ def load_loan(loan_id):
     with open(path) as f:
         loan = json.load(f)
     loan['id'] = loan_id
+    loan.setdefault('interest_rate', 0)
+    loan.setdefault('months', 0)
+    loan.setdefault('payment_per_month', 0)
     return loan
 
 
@@ -41,6 +64,41 @@ def save_loan(loan):
 def index():
     loans = load_loans()
     return render_template('index.html', loans=loans)
+
+
+@app.route('/loan/add', methods=['GET', 'POST'])
+def add_loan():
+    if request.method == 'POST':
+        child = request.form['child']
+        principal = float(request.form['principal'])
+        rate = float(request.form['rate'])
+        months = request.form.get('months')
+        payment = request.form.get('payment')
+
+        months = int(months) if months else None
+        payment = float(payment) if payment else None
+
+        if months and not payment:
+            payment = calculate_monthly_payment(principal, rate, months)
+        elif payment and not months:
+            months = math.ceil(calculate_months(principal, rate, payment))
+        elif not months and not payment:
+            months = 12
+            payment = calculate_monthly_payment(principal, rate, months)
+
+        loan_id = child.lower().replace(' ', '_')
+        loan = {
+            'id': loan_id,
+            'child': child,
+            'principal': principal,
+            'interest_rate': rate,
+            'months': months,
+            'payment_per_month': payment,
+            'payments': []
+        }
+        save_loan(loan)
+        return redirect(url_for('index'))
+    return render_template('add_loan.html')
 
 
 @app.route('/loan/<loan_id>')

@@ -3,6 +3,9 @@
 <h1>Loan to {{ loan.child }}</h1>
 <p>Original amount: {{ '%.2f'|format(loan.principal) }}</p>
 <p>Current balance: {{ '%.2f'|format(balance) }}</p>
+<p>Interest rate: {{ loan.interest_rate }}%</p>
+<p>Term: {{ loan.months }} months</p>
+<p>Expected payment per month: {{ '%.2f'|format(loan.payment_per_month) }}</p>
 <p>
   <a href="{{ url_for('add_payment', loan_id=loan.id) }}">Add payment</a> |
   <a href="{{ url_for('download_loan', loan_id=loan.id) }}">Download JSON</a>
