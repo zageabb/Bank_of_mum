@@ -9,11 +9,12 @@
 <p>Total expected repayment: {{ '%.2f'|format(loan.total_expected_repayment) }}</p>
 <div class="mb-3">
   <a href="{{ url_for('add_payment', loan_id=loan.id) }}" class="btn btn-primary">Add payment</a>
+  <a href="{{ url_for('edit_loan', loan_id=loan.id) }}" class="btn btn-secondary">Edit loan</a>
   <a href="{{ url_for('download_loan', loan_id=loan.id) }}" class="btn btn-secondary">Download JSON</a>
 </div>
 <table class="table table-striped">
   <thead>
-    <tr><th>Date</th><th>Payment</th><th>Remaining</th><th></th></tr>
+    <tr><th>Date</th><th>Payment</th><th>Remaining</th><th>Comment</th><th></th></tr>
   </thead>
   <tbody>
     {% for p in payments %}
@@ -21,6 +22,7 @@
       <td>{{ p.date }}</td>
       <td>{{ '%.2f'|format(p.amount) }}</td>
       <td>{{ '%.2f'|format(p.balance) }}</td>
+      <td>{{ p.comment }}</td>
       <td><a href="{{ url_for('edit_payment', loan_id=loan.id, payment_index=p.index) }}" class="btn btn-sm btn-secondary">Edit</a></td>
     </tr>
     {% endfor %}
