@@ -3,12 +3,13 @@
 <h1>Loans Summary</h1>
 <p><a href="{{ url_for('add_loan') }}">Add new loan</a></p>
 <table class="loans">
-  <tr><th>Child</th><th>Original Amount</th><th>Balance</th></tr>
+  <tr><th>Child</th><th>Original Amount</th><th>Balance</th><th>Total Expected Repayment</th></tr>
   {% for loan in loans %}
   <tr>
     <td><a href="{{ url_for('loan_details', loan_id=loan.id) }}">{{ loan.child }}</a></td>
     <td>{{ '%.2f'|format(loan.principal) }}</td>
     <td>{{ '%.2f'|format(loan.balance) }}</td>
+    <td>{{ '%.2f'|format(loan.total_expected_repayment) }}</td>
   </tr>
   {% endfor %}
 </table>
