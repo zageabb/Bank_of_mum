@@ -2,7 +2,7 @@ import os
 import json
 import math
 from datetime import date
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory, abort
 
 app = Flask(__name__)
 
@@ -108,12 +108,13 @@ def loan_details(loan_id):
     loan = load_loan(loan_id)
     balance = loan['principal']
     payment_rows = []
-    for p in loan.get('payments', []):
+    for idx, p in enumerate(loan.get('payments', [])):
         balance -= p['amount']
         payment_rows.append({
             'date': p['date'],
             'amount': p['amount'],
-            'balance': balance
+            'balance': balance,
+            'index': idx
         })
     return render_template('loan_details.html', loan=loan, payments=payment_rows, balance=balance)
 
@@ -129,6 +130,21 @@ def add_payment(loan_id):
         return redirect(url_for('loan_details', loan_id=loan_id))
     today = date.today().isoformat()
     return render_template('add_payment.html', loan=loan, today=today)
+
+
+@app.route('/loan/<loan_id>/payment/<int:payment_index>/edit', methods=['GET', 'POST'])
+def edit_payment(loan_id, payment_index):
+    loan = load_loan(loan_id)
+    payments = loan.setdefault('payments', [])
+    if payment_index < 0 or payment_index >= len(payments):
+        abort(404)
+    payment = payments[payment_index]
+    if request.method == 'POST':
+        payment['amount'] = float(request.form['amount'])
+        payment['date'] = request.form['date']
+        save_loan(loan)
+        return redirect(url_for('loan_details', loan_id=loan_id))
+    return render_template('edit_payment.html', loan=loan, payment=payment)
 
 
 @app.route('/loan/<loan_id>/download')
