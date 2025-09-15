@@ -2,8 +2,14 @@
 {% block content %}
 <h1>Add Payment for {{ loan.child }}</h1>
 <form method="post">
-  <label>Date: <input type="date" name="date" value="{{ today }}"></label><br>
-  <label>Amount: <input type="number" step="0.01" name="amount" required></label><br>
-  <button type="submit">Save</button>
+  <div class="mb-3">
+    <label for="date" class="form-label">Date</label>
+    <input id="date" type="date" name="date" value="{{ today }}" class="form-control">
+  </div>
+  <div class="mb-3">
+    <label for="amount" class="form-label">Amount</label>
+    <input id="amount" type="number" step="0.01" name="amount" required class="form-control">
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
 </form>
 {% endblock %}
