@@ -7,18 +7,22 @@
 <p>Term: {{ loan.months }} months</p>
 <p>Expected payment per month: {{ '%.2f'|format(loan.payment_per_month) }}</p>
 <p>Total expected repayment: {{ '%.2f'|format(loan.total_expected_repayment) }}</p>
-<p>
-  <a href="{{ url_for('add_payment', loan_id=loan.id) }}">Add payment</a> |
-  <a href="{{ url_for('download_loan', loan_id=loan.id) }}">Download JSON</a>
-</p>
-<table class="payments">
-  <tr><th>Date</th><th>Payment</th><th>Remaining</th></tr>
-  {% for p in payments %}
-  <tr>
-    <td>{{ p.date }}</td>
-    <td>{{ '%.2f'|format(p.amount) }}</td>
-    <td>{{ '%.2f'|format(p.balance) }}</td>
-  </tr>
-  {% endfor %}
+<div class="mb-3">
+  <a href="{{ url_for('add_payment', loan_id=loan.id) }}" class="btn btn-primary">Add payment</a>
+  <a href="{{ url_for('download_loan', loan_id=loan.id) }}" class="btn btn-secondary">Download JSON</a>
+</div>
+<table class="table table-striped">
+  <thead>
+    <tr><th>Date</th><th>Payment</th><th>Remaining</th></tr>
+  </thead>
+  <tbody>
+    {% for p in payments %}
+    <tr>
+      <td>{{ p.date }}</td>
+      <td>{{ '%.2f'|format(p.amount) }}</td>
+      <td>{{ '%.2f'|format(p.balance) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
 </table>
 {% endblock %}
