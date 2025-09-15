@@ -38,6 +38,7 @@ def load_loans():
             loan.setdefault('months', 0)
             loan.setdefault('payment_per_month', 0)
             loan['balance'] = loan['principal'] - sum(p['amount'] for p in loan.get('payments', []))
+            loan['total_expected_repayment'] = loan['payment_per_month'] * loan['months']
             loans.append(loan)
     return loans
 
@@ -50,6 +51,7 @@ def load_loan(loan_id):
     loan.setdefault('interest_rate', 0)
     loan.setdefault('months', 0)
     loan.setdefault('payment_per_month', 0)
+    loan['total_expected_repayment'] = loan['payment_per_month'] * loan['months']
     return loan
 
 
