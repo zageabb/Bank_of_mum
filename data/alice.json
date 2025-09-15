@@ -1,0 +1,8 @@
+{
+  "child": "Alice",
+  "principal": 1000,
+  "payments": [
+    {"date": "2024-01-01", "amount": 100},
+    {"date": "2024-02-01", "amount": -50}
+  ]
+}
