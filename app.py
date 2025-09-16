@@ -188,46 +188,54 @@ def generate_amortization_schedule(loan):
     payments_by_period = _group_payments_by_period(loan.get('payments', []), start_date, total_periods)
     balance = principal
     schedule = []
+    today = date.today()
+    current_month_index = today.year * 12 + today.month
 
     for period in range(1, total_periods + 1):
+        period_date = _add_months(start_date, period - 1)
+        period_month_index = period_date.year * 12 + period_date.month
         begin_balance = balance
-        interest = begin_balance * monthly_rate if monthly_rate else 0.0
-        payment_amount = payment
+        interest_value = begin_balance * monthly_rate if monthly_rate else 0.0
+        scheduled_payment = payment
 
-        # Ensure the final period clears the balance.
+        # Ensure the final period clears the balance for the forecast schedule.
         if period == total_periods:
-            payment_amount = begin_balance + interest
-        elif monthly_rate and payment_amount <= interest:
-            # Avoid negative amortization by at least covering the interest.
-            payment_amount = interest
+            scheduled_payment = begin_balance + interest_value
+        elif monthly_rate and scheduled_payment <= interest_value:
+            # Avoid negative amortization by at least covering the interest in the forecast.
+            scheduled_payment = interest_value
 
-        principal_component = payment_amount - interest
+        interest = round(interest_value, 2)
+        scheduled_payment = round(scheduled_payment, 2)
+
+        actual_payment = payments_by_period.get(period)
+        if actual_payment is not None:
+            applied_payment = round(actual_payment, 2)
+        else:
+            if period_month_index > current_month_index:
+                applied_payment = scheduled_payment
+            else:
+                applied_payment = 0.0
+
+        principal_component = applied_payment - interest
         end_balance = begin_balance - principal_component
 
-        interest = round(interest, 2)
-        payment_amount = round(payment_amount, 2)
         principal_component = round(principal_component, 2)
         end_balance = round(end_balance, 2)
 
         if end_balance < 0:
             # Adjust rounding artefacts so the balance finishes at zero.
-            payment_amount += end_balance
-            payment_amount = round(payment_amount, 2)
-            principal_component = round(payment_amount - interest, 2)
+            applied_payment += end_balance
+            applied_payment = round(applied_payment, 2)
+            principal_component = round(applied_payment - interest, 2)
             end_balance = 0.0
-
-        actual_payment = payments_by_period.get(period)
-        if actual_payment is None:
-            actual_payment = payment_amount
-        else:
-            actual_payment = round(actual_payment, 2)
 
         schedule.append({
             'number': period,
-            'date': _add_months(start_date, period - 1).isoformat(),
+            'date': period_date.isoformat(),
             'begin_balance': round(begin_balance, 2),
-            'payment': payment_amount,
-            'actual_payment': actual_payment,
+            'payment': scheduled_payment,
+            'actual_payment': applied_payment,
             'interest': interest,
             'principal': principal_component,
             'end_balance': max(end_balance, 0.0),
