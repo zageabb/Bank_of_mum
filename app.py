@@ -1,7 +1,8 @@
 import os
 import json
 import math
-from datetime import date
+import calendar
+from datetime import date, datetime
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, abort
 
 app = Flask(__name__)
@@ -25,6 +26,24 @@ def calculate_months(principal, annual_rate, payment):
         return principal / payment
     return math.log(payment / (payment - principal * r)) / math.log(1 + r)
 
+def _coerce_months(value):
+    if value in (None, ""):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_float(value):
+    if value in (None, ""):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def load_loans():
     loans = []
     for filename in os.listdir(DATA_DIR):
@@ -34,9 +53,10 @@ def load_loans():
                 loan = json.load(f)
             loan_id = os.path.splitext(filename)[0]
             loan['id'] = loan_id
-            loan.setdefault('interest_rate', 0)
-            loan.setdefault('months', 0)
-            loan.setdefault('payment_per_month', 0)
+            loan['principal'] = _coerce_float(loan.get('principal', 0))
+            loan['interest_rate'] = _coerce_float(loan.get('interest_rate', 0))
+            loan['months'] = _coerce_months(loan.get('months', 0))
+            loan['payment_per_month'] = _coerce_float(loan.get('payment_per_month', 0))
             loan['balance'] = loan['principal'] - sum(p['amount'] for p in loan.get('payments', []))
             loan['total_expected_repayment'] = loan['payment_per_month'] * loan['months']
             loans.append(loan)
@@ -48,11 +68,97 @@ def load_loan(loan_id):
     with open(path) as f:
         loan = json.load(f)
     loan['id'] = loan_id
-    loan.setdefault('interest_rate', 0)
-    loan.setdefault('months', 0)
-    loan.setdefault('payment_per_month', 0)
+    loan['principal'] = _coerce_float(loan.get('principal', 0))
+    loan['interest_rate'] = _coerce_float(loan.get('interest_rate', 0))
+    loan['months'] = _coerce_months(loan.get('months', 0))
+    loan['payment_per_month'] = _coerce_float(loan.get('payment_per_month', 0))
     loan['total_expected_repayment'] = loan['payment_per_month'] * loan['months']
     return loan
+
+
+def _parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _add_months(start_date, months):
+    year = start_date.year + (start_date.month - 1 + months) // 12
+    month = (start_date.month - 1 + months) % 12 + 1
+    day = min(start_date.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _schedule_start_date(loan):
+    start = _parse_iso_date(loan.get('start_date'))
+    if start:
+        return start
+    payment_dates = [_parse_iso_date(p.get('date')) for p in loan.get('payments', [])]
+    payment_dates = [d for d in payment_dates if d]
+    if payment_dates:
+        return min(payment_dates)
+    today = date.today()
+    return today.replace(day=1)
+
+
+def generate_amortization_schedule(loan):
+    principal = _coerce_float(loan.get('principal', 0))
+    annual_rate = _coerce_float(loan.get('interest_rate', 0))
+    months = _coerce_months(loan.get('months', 0))
+    payment = _coerce_float(loan.get('payment_per_month', 0))
+
+    if principal <= 0 or months <= 0 or payment <= 0:
+        return []
+
+    monthly_rate = annual_rate / 12 / 100 if annual_rate else 0
+    start_date = _schedule_start_date(loan)
+    balance = principal
+    schedule = []
+
+    for period in range(1, months + 1):
+        begin_balance = balance
+        interest = begin_balance * monthly_rate if monthly_rate else 0.0
+        payment_amount = payment
+
+        # Ensure the final period clears the balance.
+        if period == months:
+            payment_amount = begin_balance + interest
+        elif monthly_rate and payment_amount <= interest:
+            # Avoid negative amortization by at least covering the interest.
+            payment_amount = interest
+
+        principal_component = payment_amount - interest
+        end_balance = begin_balance - principal_component
+
+        interest = round(interest, 2)
+        payment_amount = round(payment_amount, 2)
+        principal_component = round(principal_component, 2)
+        end_balance = round(end_balance, 2)
+
+        if end_balance < 0:
+            # Adjust rounding artefacts so the balance finishes at zero.
+            payment_amount += end_balance
+            payment_amount = round(payment_amount, 2)
+            principal_component = round(payment_amount - interest, 2)
+            end_balance = 0.0
+
+        schedule.append({
+            'number': period,
+            'date': _add_months(start_date, period - 1).isoformat(),
+            'begin_balance': round(begin_balance, 2),
+            'payment': payment_amount,
+            'interest': interest,
+            'principal': principal_component,
+            'end_balance': max(end_balance, 0.0),
+            'is_final': period == months
+        })
+
+        balance = end_balance
+
+    return schedule
 
 
 def save_loan(loan):
@@ -137,18 +243,48 @@ def edit_loan(loan_id):
 @app.route('/loan/<loan_id>')
 def loan_details(loan_id):
     loan = load_loan(loan_id)
+    payments_with_index = list(enumerate(loan.get('payments', [])))
+    payments_with_index.sort(key=lambda item: item[1].get('date') or '')
+
     balance = loan['principal']
     payment_rows = []
-    for idx, p in enumerate(loan.get('payments', [])):
-        balance -= p['amount']
+    for idx, payment in payments_with_index:
+        amount = _coerce_float(payment.get('amount'))
+        balance -= amount
         payment_rows.append({
-            'date': p['date'],
-            'amount': p['amount'],
-            'balance': balance,
-            'comment': p.get('comment', ''),
+            'date': payment.get('date'),
+            'amount': amount,
+            'balance': round(balance, 2),
+            'comment': payment.get('comment', ''),
             'index': idx
         })
-    return render_template('loan_details.html', loan=loan, payments=payment_rows, balance=balance)
+
+    actual_final_payment = None
+    if payments_with_index:
+        final_payment = payments_with_index[-1][1]
+        actual_final_payment = {
+            'amount': _coerce_float(final_payment.get('amount')),
+            'date': final_payment.get('date')
+        }
+
+    amortization_schedule = generate_amortization_schedule(loan)
+    expected_final_payment = None
+    if amortization_schedule:
+        last_row = amortization_schedule[-1]
+        expected_final_payment = {
+            'amount': last_row['payment'],
+            'date': last_row['date']
+        }
+
+    return render_template(
+        'loan_details.html',
+        loan=loan,
+        payments=payment_rows,
+        balance=round(balance, 2),
+        amortization_schedule=amortization_schedule,
+        actual_final_payment=actual_final_payment,
+        expected_final_payment=expected_final_payment
+    )
 
 
 @app.route('/loan/<loan_id>/payment', methods=['GET', 'POST'])
