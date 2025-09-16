@@ -1,0 +1,23 @@
+{
+  "child": "Courtney",
+  "principal": 900.0,
+  "interest_rate": 0,
+  "months": 9,
+  "payment_per_month": 100,
+  "payments": [
+    {
+      "date": "2024-07-15",
+      "amount": 150.0
+    },
+    {
+      "date": "2024-09-15",
+      "amount": 500.0
+    },
+    {
+      "date": "2025-01-15",
+      "amount": 250.0,
+      "comment": "test"
+    }
+  ],
+  "total_expected_repayment": 900
+}

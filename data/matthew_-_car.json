@@ -1,0 +1,18 @@
+{
+  "child": "Matthew - Car",
+  "principal": 8500.0,
+  "interest_rate": 2.74,
+  "months": 80,
+  "payment_per_month": 100.000137783465,
+  "payments": [
+    {
+      "date": "2025-09-01",
+      "amount": 4150.0
+    },
+    {
+      "date": "2025-06-15",
+      "amount": 500.0
+    }
+  ],
+  "total_expected_repayment": 1200.00165340158
+}
