@@ -11,8 +11,8 @@
       <th>Term (months)</th>
       <th>Expected payment / month</th>
       <th>Total expected repayment</th>
-      <th>Expected final payment</th>
-      <th>Actual final payment</th>
+      <th>Expected payment</th>
+      <th>Actual payment</th>
     </tr>
   </thead>
   <tbody>
@@ -20,24 +20,24 @@
       <td>{{ '%.2f'|format(loan.principal) }}</td>
       <td>{{ '%.2f'|format(balance) }}</td>
       <td>{{ '%.2f'|format(loan.interest_rate) }}%</td>
-      <td>{{ loan.months if loan.months else 'N/A' }}</td>
+      <td>{{ '%.2f'|format(loan.months) if loan.months else 'N/A' }}</td>
       <td>{{ '%.2f'|format(loan.payment_per_month) }}</td>
       <td>{{ '%.2f'|format(loan.total_expected_repayment) }}</td>
       <td>
-        {% if expected_final_payment %}
-          {{ '%.2f'|format(expected_final_payment.amount) }}
-          {% if expected_final_payment.date %}
-            <div class="text-muted small">{{ expected_final_payment.date }}</div>
+        {% if expected_payment_info %}
+          {{ '%.2f'|format(expected_payment_info.amount) }}
+          {% if expected_payment_info.date %}
+            <div class="text-muted small">{{ expected_payment_info.date }}</div>
           {% endif %}
         {% else %}
           N/A
         {% endif %}
       </td>
       <td>
-        {% if actual_final_payment %}
-          {{ '%.2f'|format(actual_final_payment.amount) }}
-          {% if actual_final_payment.date %}
-            <div class="text-muted small">{{ actual_final_payment.date }}</div>
+        {% if actual_payment_info %}
+          {{ '%.2f'|format(actual_payment_info.amount) }}
+          {% if actual_payment_info.date %}
+            <div class="text-muted small">{{ actual_payment_info.date }}</div>
           {% endif %}
         {% else %}
           N/A
@@ -89,12 +89,11 @@
       <th>#</th>
       <th>Due date</th>
       <th>Beginning balance</th>
-      <th>Payment</th>
+      <th>Expected payment</th>
+      <th>Actual / forecast payment</th>
       <th>Principal</th>
       <th>Interest</th>
       <th>Ending balance</th>
-      <th>Expected final payment</th>
-      <th>Actual final payment</th>
     </tr>
   </thead>
   <tbody>
@@ -104,31 +103,10 @@
       <td>{{ row.date }}</td>
       <td>{{ '%.2f'|format(row.begin_balance) }}</td>
       <td>{{ '%.2f'|format(row.payment) }}</td>
+      <td>{{ '%.2f'|format(row.actual_payment) }}</td>
       <td>{{ '%.2f'|format(row.principal) }}</td>
       <td>{{ '%.2f'|format(row.interest) }}</td>
       <td>{{ '%.2f'|format(row.end_balance) }}</td>
-      <td>
-        {% if row.is_final and expected_final_payment %}
-          {{ '%.2f'|format(expected_final_payment.amount) }}
-          {% if expected_final_payment.date %}
-            <div class="text-muted small">{{ expected_final_payment.date }}</div>
-          {% endif %}
-        {% elif row.is_final %}
-          N/A
-        {% endif %}
-      </td>
-      <td>
-        {% if row.is_final %}
-          {% if actual_final_payment %}
-            {{ '%.2f'|format(actual_final_payment.amount) }}
-            {% if actual_final_payment.date %}
-              <div class="text-muted small">{{ actual_final_payment.date }}</div>
-            {% endif %}
-          {% else %}
-            N/A
-          {% endif %}
-        {% endif %}
-      </td>
     </tr>
     {% endfor %}
   </tbody>

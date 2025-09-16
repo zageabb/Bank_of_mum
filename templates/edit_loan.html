@@ -12,11 +12,11 @@
   </div>
   <div class="mb-3">
     <label for="months" class="form-label">Number of months</label>
-    <input id="months" name="months" type="number" value="{{ loan.months or '' }}" class="form-control">
+    <input id="months" name="months" type="number" step="0.01" value="{{ '%.2f'|format(loan.months) if loan.months else '' }}" class="form-control">
   </div>
   <div class="mb-3">
     <label for="payment" class="form-label">Payment per month</label>
-    <input id="payment" name="payment" type="number" step="0.01" value="{{ loan.payment_per_month or '' }}" class="form-control">
+    <input id="payment" name="payment" type="number" step="0.01" value="{{ '%.2f'|format(loan.payment_per_month) if loan.payment_per_month else '' }}" class="form-control">
   </div>
   <p>Provide either number of months or payment per month to calculate the other.</p>
   <button type="submit" class="btn btn-primary">Save</button>
