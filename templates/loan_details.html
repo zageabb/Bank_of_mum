@@ -7,6 +7,7 @@
     <tr>
       <th>Original amount</th>
       <th>Current balance</th>
+      <th>Start date</th>
       <th>Interest rate</th>
       <th>Term (months)</th>
       <th>Expected payment / month</th>
@@ -19,6 +20,7 @@
     <tr>
       <td>{{ '%.2f'|format(loan.principal) }}</td>
       <td>{{ '%.2f'|format(balance) }}</td>
+      <td>{{ loan.start_date or 'Not set' }}</td>
       <td>{{ '%.2f'|format(loan.interest_rate) }}%</td>
       <td>{{ '%.2f'|format(loan.months) if loan.months else 'N/A' }}</td>
       <td>{{ '%.2f'|format(loan.payment_per_month) }}</td>
