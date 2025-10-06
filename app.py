@@ -62,6 +62,7 @@ def load_loans():
         loan['id'] = loan_id
         payments = loan.get('payments') or []
         loan['payments'] = payments
+        loan.setdefault('start_date', None)
 
         principal, annual_rate, months, payment = _resolve_loan_terms(loan)
         loan['principal'] = principal
@@ -90,6 +91,7 @@ def load_loan(loan_id):
         loan = json.load(f)
     loan['id'] = loan_id
     loan['payments'] = loan.get('payments') or []
+    loan.setdefault('start_date', None)
 
     principal, annual_rate, months, payment = _resolve_loan_terms(loan)
     loan['principal'] = principal
@@ -268,9 +270,12 @@ def add_loan():
         rate = float(request.form['rate'])
         months_value = request.form.get('months')
         payment_value = request.form.get('payment')
+        start_date_value = request.form.get('start_date')
 
         months = float(months_value) if months_value else None
         payment = float(payment_value) if payment_value else None
+        start_date = _parse_iso_date(start_date_value)
+        start_date = start_date.isoformat() if start_date else None
 
         if months is not None and months <= 0:
             months = None
@@ -298,11 +303,13 @@ def add_loan():
             'interest_rate': rate,
             'months': months,
             'payment_per_month': payment,
+            'start_date': start_date,
             'payments': []
         }
         save_loan(loan)
         return redirect(url_for('index'))
-    return render_template('add_loan.html')
+    default_start_date = date.today().replace(day=1).isoformat()
+    return render_template('add_loan.html', default_start_date=default_start_date)
 
 
 @app.route('/loan/<loan_id>/edit', methods=['GET', 'POST'])
@@ -313,9 +320,12 @@ def edit_loan(loan_id):
         rate = float(request.form.get('rate', 0) or 0)
         months_value = request.form.get('months')
         payment_value = request.form.get('payment')
+        start_date_value = request.form.get('start_date')
 
         months = float(months_value) if months_value else None
         payment = float(payment_value) if payment_value else None
+        start_date = _parse_iso_date(start_date_value)
+        start_date = start_date.isoformat() if start_date else None
 
         if months is not None and months <= 0:
             months = None
@@ -339,7 +349,8 @@ def edit_loan(loan_id):
             'principal': principal,
             'interest_rate': rate,
             'months': months,
-            'payment_per_month': payment
+            'payment_per_month': payment,
+            'start_date': start_date
         })
         save_loan(loan)
         return redirect(url_for('loan_details', loan_id=loan_id))
