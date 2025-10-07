@@ -79,7 +79,7 @@ def load_loans():
         loan['months'] = months if months else 0.0
         loan['payment_per_month'] = payment if payment else 0.0
         loan['balance'] = round(loan['principal'] - sum(_coerce_float(p.get('amount')) for p in payments), 2)
-        loan['total_expected_repayment'] = round(sum(row['payment'] for row in amortization), 2) if amortization else 0.0
+        loan['total_expected_repayment'] = round(sum(row['actual_payment'] for row in amortization), 2) if amortization else 0.0
 
         loans.append(loan)
     return loans
@@ -106,7 +106,7 @@ def load_loan(loan_id):
         'months': months,
         'payment_per_month': payment,
     })
-    loan['total_expected_repayment'] = round(sum(row['payment'] for row in amortization), 2) if amortization else 0.0
+    loan['total_expected_repayment'] = round(sum(row['actual_payment'] for row in amortization), 2) if amortization else 0.0
     return loan
 
 
@@ -196,7 +196,10 @@ def generate_amortization_schedule(loan):
     for period in range(1, total_periods + 1):
         period_date = _add_months(start_date, period - 1)
         period_month_index = period_date.year * 12 + period_date.month
-        begin_balance = balance
+        begin_balance = round(balance, 2)
+
+        if begin_balance <= 0 and payments_by_period.get(period) is None:
+            break
         interest_value = begin_balance * monthly_rate if monthly_rate else 0.0
         scheduled_payment = payment
 
@@ -214,7 +217,7 @@ def generate_amortization_schedule(loan):
         if actual_payment is not None:
             applied_payment = round(actual_payment, 2)
         else:
-            if period_month_index > current_month_index:
+            if period_month_index >= current_month_index:
                 applied_payment = scheduled_payment
             else:
                 applied_payment = 0.0
@@ -241,10 +244,17 @@ def generate_amortization_schedule(loan):
             'interest': interest,
             'principal': principal_component,
             'end_balance': max(end_balance, 0.0),
-            'is_final': period == total_periods
+            'is_final': False
         })
 
         balance = max(end_balance, 0.0)
+
+        if balance <= 0:
+            schedule[-1]['payment'] = schedule[-1]['actual_payment']
+            break
+
+    if schedule:
+        schedule[-1]['is_final'] = True
 
     return schedule
 
