@@ -2,7 +2,7 @@ import "./globals.css";
 
 export const metadata = {
   title: "Bank of Mum",
-  description: "Family lending, accounting and forecasting workspace",
+  description: "Family lending, accounting, forecasting and AI workspace",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -10,7 +10,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         {children}
-        <a className="scenario-shortcut" href="/scenarios">Scenarios</a>
+        <nav className="phase6-shortcuts" aria-label="Bank of Mum shortcuts">
+          <a href="/scenarios">Scenarios</a>
+          <a href="/ai">AI</a>
+          <a href="/settings">Settings</a>
+        </nav>
       </body>
     </html>
   );
