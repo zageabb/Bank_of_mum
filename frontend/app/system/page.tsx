@@ -8,7 +8,12 @@ type Diagnostics={ok:boolean;runtime:{version:string;phase:number;environment:st
 
 const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000/api";
 
-async function api<T>(path:string):Promise<T>{const response=await fetch(`${API}${path}`,{cache:"no-store"});const body=await response.json().catch(()=>({detail:"Request failed"}));if(!response.ok)throw new Error(body.detail||`HTTP ${response.status}`);return body as T}
+async function api<T>(path:string,allowServiceUnavailable=false):Promise<T>{
+  const response=await fetch(`${API}${path}`,{cache:"no-store"});
+  const body=await response.json().catch(()=>({detail:"Request failed"}));
+  if(!response.ok&&!(allowServiceUnavailable&&response.status===503))throw new Error(body.detail||`HTTP ${response.status}`);
+  return body as T;
+}
 
 export default function SystemPage(){
   const [ready,setReady]=useState<Ready|null>(null);
@@ -16,10 +21,17 @@ export default function SystemPage(){
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(true);
 
-  async function refresh(){setLoading(true);try{const [r,d]=await Promise.all([api<Ready>("/health/ready"),api<Diagnostics>("/system/diagnostics")]);setReady(r);setDetails(d);setError("")}catch(reason){setError(reason instanceof Error?reason.message:"Could not load system status")}finally{setLoading(false)}}
+  async function refresh(){
+    setLoading(true);
+    try{
+      const [r,d]=await Promise.all([api<Ready>("/health/ready",true),api<Diagnostics>("/system/diagnostics")]);
+      setReady(r);setDetails(d);setError("");
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not load system status")}
+    finally{setLoading(false)}
+  }
   useEffect(()=>{void refresh();const timer=setInterval(()=>void refresh(),30000);return()=>clearInterval(timer)},[]);
 
-  const status=details?.ok&&ready?.ok;
+  const status=Boolean(details?.ok&&ready?.ok);
   return <main className="phase8-page">
     <section className="phase8-head"><div><p className="eyebrow">BANK OF MUM · PHASE 8</p><h1>System status</h1><p>Production readiness, accounting integrity and runtime diagnostics.</p></div><div className={`phase8-overall ${status?"ok":"review"}`}>{loading?"Checking…":status?"READY":"REVIEW"}</div></section>
     {error&&<div className="notice error">{error}</div>}
