@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -48,6 +48,7 @@ class Account(Base):
         back_populates="account",
         order_by=lambda: (InterestRatePeriod.effective_from, InterestRatePeriod.id),
     )
+    payment_plan_memberships: Mapped[list[PaymentPlanAccount]] = relationship(back_populates="account")
 
 
 class LedgerTransaction(Base):
@@ -83,6 +84,39 @@ class InterestRatePeriod(Base):
     created_by: Mapped[str] = mapped_column(String(120), default="local")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     account: Mapped[Account] = relationship(back_populates="interest_rates")
+
+
+class PaymentPlan(Base):
+    __tablename__ = "payment_plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True)
+    first_payment_date: Mapped[date] = mapped_column(Date, index=True)
+    frequency: Mapped[str] = mapped_column(String(30), default="monthly")
+    monthly_budget: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"))
+    strategy: Mapped[str] = mapped_column(String(40), default="priority_rollover")
+    status: Mapped[str] = mapped_column(String(30), default="active")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(120), default="local")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    members: Mapped[list[PaymentPlanAccount]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by=lambda: (PaymentPlanAccount.priority, PaymentPlanAccount.id),
+    )
+
+
+class PaymentPlanAccount(Base):
+    __tablename__ = "payment_plan_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("payment_plans.id"), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    priority: Mapped[int] = mapped_column(Integer)
+    base_payment: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    plan: Mapped[PaymentPlan] = relationship(back_populates="members")
+    account: Mapped[Account] = relationship(back_populates="payment_plan_memberships")
 
 
 class AuditEvent(Base):
