@@ -10,6 +10,8 @@ DIRECTION_PATTERN = "^(debit|credit)$"
 DAY_COUNT_PATTERN = "^(actual_365|actual_366|actual_actual|30_360)$"
 INTEREST_METHOD_PATTERN = "^(daily_simple)$"
 PAYMENT_ALLOCATION_PATTERN = "^(fees_interest_principal)$"
+PLAN_STRATEGY_PATTERN = "^(priority_rollover)$"
+PLAN_STATUS_PATTERN = "^(active|paused|archived)$"
 
 
 class TransactionCreate(BaseModel):
@@ -48,4 +50,25 @@ class AccountInterestSettingsUpdate(BaseModel):
     interest_method: str = Field(default="daily_simple", pattern=INTEREST_METHOD_PATTERN)
     day_count_convention: str = Field(default="actual_365", pattern=DAY_COUNT_PATTERN)
     payment_allocation: str = Field(default="fees_interest_principal", pattern=PAYMENT_ALLOCATION_PATTERN)
+    reason: str = Field(min_length=3)
+
+
+class PaymentPlanMemberInput(BaseModel):
+    account_id: int = Field(gt=0)
+    priority: int = Field(ge=1)
+    base_payment: Decimal = Field(ge=0)
+    enabled: bool = True
+
+
+class PaymentPlanCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    first_payment_date: date
+    monthly_budget: Decimal = Field(default=Decimal("0.00"), ge=0)
+    strategy: str = Field(default="priority_rollover", pattern=PLAN_STRATEGY_PATTERN)
+    status: str = Field(default="active", pattern=PLAN_STATUS_PATTERN)
+    notes: str = ""
+    members: list[PaymentPlanMemberInput] = Field(min_length=1)
+
+
+class PaymentPlanUpdate(PaymentPlanCreate):
     reason: str = Field(min_length=3)

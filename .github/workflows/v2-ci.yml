@@ -6,12 +6,14 @@ on:
       - phase-1-foundation
       - phase-2-ledger-audit
       - phase-3-interest-engine
+      - phase-4-payment-planning
       - main
   pull_request:
     branches:
       - main
       - phase-1-foundation
       - phase-2-ledger-audit
+      - phase-3-interest-engine
 
 jobs:
   backend:
