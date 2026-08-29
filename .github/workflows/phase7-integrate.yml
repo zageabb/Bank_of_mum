@@ -1,0 +1,46 @@
+name: Phase 7 router integration
+
+on:
+  push:
+    branches:
+      - phase-7-reporting-polish
+    paths:
+      - .github/workflows/phase7-integrate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-7-reporting-polish
+      - name: Patch main application
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/app/main.py')
+          text = path.read_text()
+          import_line = 'from .phase7 import router as phase7_router\n'
+          marker = 'from .planning import forecast_payment_plan, plan_dict, validate_members\n'
+          if import_line not in text:
+              text = text.replace(marker, marker + import_line)
+          hook = 'app.include_router(phase7_router)\n'
+          middleware_end = '    allow_headers=["*"],\n)\n\n\ndef _account_dict'
+          if hook not in text:
+              text = text.replace(middleware_end, '    allow_headers=["*"],\n)\napp.include_router(phase7_router)\n\n\ndef _account_dict')
+          text = text.replace('version="2.0.0-phase6"', 'version="2.0.0-phase7"')
+          text = text.replace('"version": "2.0.0-phase6"', '"version": "2.0.0-phase7"')
+          text = text.replace('"phase": 6,\n        "balance_note": "The immutable ledger remains authoritative. Phase 6 AI reads deterministic accounting tools and may only prepare draft what-if scenarios for review.",', '"phase": 7,\n        "balance_note": "The immutable ledger remains authoritative. Phase 7 adds audited management, statements, annual interest reporting, exports, backup/restore and integrity verification.",')
+          path.write_text(text)
+          PY
+      - name: Commit integration
+        run: |
+          git config user.name "zageabb"
+          git config user.email "zageabb@users.noreply.github.com"
+          git add backend/app/main.py
+          git rm .github/workflows/phase7-integrate.yml
+          git commit -m "Phase 7: register reporting and maintenance API"
+          git push origin HEAD:phase-7-reporting-polish
