@@ -39,7 +39,7 @@ class Account(Base):
     transactions: Mapped[list[LedgerTransaction]] = relationship(
         back_populates="account",
         foreign_keys="LedgerTransaction.account_id",
-        order_by="(LedgerTransaction.effective_date, LedgerTransaction.id)",
+        order_by=lambda: (LedgerTransaction.effective_date, LedgerTransaction.id),
     )
 
 
