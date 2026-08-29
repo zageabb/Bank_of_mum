@@ -30,10 +30,21 @@ from .migrations import (
     run_phase2_schema_migrations,
     run_phase3_schema_migrations,
 )
-from .models import Account, AuditEvent, InterestRatePeriod, LedgerTransaction, Person
+from .models import (
+    Account,
+    AuditEvent,
+    InterestRatePeriod,
+    LedgerTransaction,
+    PaymentPlan,
+    PaymentPlanAccount,
+    Person,
+)
+from .planning import forecast_payment_plan, plan_dict, validate_members
 from .schemas import (
     AccountInterestSettingsUpdate,
     InterestRateCreate,
+    PaymentPlanCreate,
+    PaymentPlanUpdate,
     TransactionCorrection,
     TransactionCreate,
     TransactionReverse,
@@ -47,7 +58,7 @@ with SessionLocal() as _startup_db:
     prepare_phase3_data(_startup_db)
 install_immutability_guards(engine)
 
-app = FastAPI(title=settings.app_name, version="2.0.0-phase3")
+app = FastAPI(title=settings.app_name, version="2.0.0-phase4")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",") if item.strip()],
@@ -101,14 +112,30 @@ def _audit_dict(item: AuditEvent) -> dict:
     }
 
 
+def _plan_member_payload(body) -> list[dict]:
+    return [item.model_dump() for item in body.members]
+
+
+def _replace_plan_members(plan: PaymentPlan, validated: list[tuple[Account, int, Decimal, bool]]) -> None:
+    plan.members.clear()
+    for account, priority, base_payment, enabled in validated:
+        plan.members.append(PaymentPlanAccount(
+            account=account,
+            priority=priority,
+            base_payment=base_payment,
+            enabled=enabled,
+        ))
+
+
 @app.get("/api/health")
 def health():
     return {
         "ok": True,
         "app": settings.app_name,
-        "version": "2.0.0-phase3",
+        "version": "2.0.0-phase4",
         "ledger_immutable": True,
         "interest_engine": "daily_simple",
+        "payment_planning": "priority_rollover",
     }
 
 
@@ -124,6 +151,7 @@ def bootstrap(db: Session = Depends(get_db)):
     ) or Decimal("0.00")
     calculations = [calculate_account(db, item.id) for item in accounts]
     audit_count = db.scalar(select(func.count(AuditEvent.id))) or 0
+    plan_count = db.scalar(select(func.count(PaymentPlan.id))) or 0
     return {
         "summary": {
             "people": len(people),
@@ -136,12 +164,13 @@ def bootstrap(db: Session = Depends(get_db)):
             "total_interest_accrued": round(sum(item["total_interest_accrued"] for item in calculations), 2),
             "total_interest_paid": round(sum(item["total_interest_paid"] for item in calculations), 2),
             "audit_events": int(audit_count),
+            "payment_plans": int(plan_count),
         },
         "people": [{"id": p.id, "name": p.name, "accounts": len(p.accounts)} for p in people],
         "accounts": [_account_dict(db, item) for item in accounts],
         "settings": {"ollama_url": settings.ollama_url, "ollama_model": settings.ollama_model},
-        "phase": 3,
-        "balance_note": "Balances now include deterministic date-sensitive accrued interest. Every payment causes the account to be replayed from its dated ledger history.",
+        "phase": 4,
+        "balance_note": "Balances use the dated interest engine. Phase 4 payment plans simulate future dated payments without posting anything to the immutable ledger.",
     }
 
 
@@ -363,6 +392,111 @@ def correct_transaction_api(transaction_id: int, body: TransactionCorrection, db
         }
     except ValueError as exc:
         db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/payment-plans")
+def payment_plans(db: Session = Depends(get_db)):
+    plans = db.scalars(select(PaymentPlan).order_by(PaymentPlan.status, PaymentPlan.name, PaymentPlan.id)).all()
+    return {"plans": [plan_dict(item) for item in plans]}
+
+
+@app.post("/api/payment-plans")
+def create_payment_plan(body: PaymentPlanCreate, db: Session = Depends(get_db)):
+    if db.scalar(select(PaymentPlan).where(PaymentPlan.name == body.name).limit(1)):
+        raise HTTPException(409, "A payment plan with this name already exists")
+    try:
+        validated, budget = validate_members(db, _plan_member_payload(body), body.monthly_budget)
+        plan = PaymentPlan(
+            name=body.name.strip(),
+            first_payment_date=body.first_payment_date,
+            frequency="monthly",
+            monthly_budget=budget,
+            strategy=body.strategy,
+            status=body.status,
+            notes=body.notes,
+            created_by="local",
+        )
+        db.add(plan)
+        _replace_plan_members(plan, validated)
+        db.flush()
+        snapshot = plan_dict(plan)
+        log_audit(
+            db,
+            entity_type="payment_plan",
+            entity_id=plan.id,
+            action="plan_created",
+            summary=f"Payment plan {plan.name} created with monthly budget £{budget:.2f}",
+            after=snapshot,
+            reason="Payment plan created",
+            actor="local",
+        )
+        db.commit()
+        return {"plan": plan_dict(plan)}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/payment-plans/{plan_id}")
+def payment_plan_detail(plan_id: int, db: Session = Depends(get_db)):
+    plan = db.get(PaymentPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "Payment plan not found")
+    return {"plan": plan_dict(plan)}
+
+
+@app.put("/api/payment-plans/{plan_id}")
+def update_payment_plan(plan_id: int, body: PaymentPlanUpdate, db: Session = Depends(get_db)):
+    plan = db.get(PaymentPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "Payment plan not found")
+    duplicate = db.scalar(select(PaymentPlan).where(PaymentPlan.name == body.name, PaymentPlan.id != plan_id).limit(1))
+    if duplicate:
+        raise HTTPException(409, "A payment plan with this name already exists")
+    before = plan_dict(plan)
+    try:
+        validated, budget = validate_members(db, _plan_member_payload(body), body.monthly_budget)
+        plan.name = body.name.strip()
+        plan.first_payment_date = body.first_payment_date
+        plan.frequency = "monthly"
+        plan.monthly_budget = budget
+        plan.strategy = body.strategy
+        plan.status = body.status
+        plan.notes = body.notes
+        _replace_plan_members(plan, validated)
+        db.flush()
+        after = plan_dict(plan)
+        log_audit(
+            db,
+            entity_type="payment_plan",
+            entity_id=plan.id,
+            action="plan_updated",
+            summary=f"Payment plan {plan.name} updated",
+            before=before,
+            after=after,
+            reason=body.reason,
+            actor="local",
+        )
+        db.commit()
+        return {"plan": plan_dict(plan)}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/payment-plans/{plan_id}/forecast")
+def payment_plan_forecast(
+    plan_id: int,
+    horizon_months: int = Query(default=240, ge=1, le=600),
+    db: Session = Depends(get_db),
+):
+    plan = db.get(PaymentPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "Payment plan not found")
+    try:
+        return forecast_payment_plan(db, plan, horizon_months)
+    except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
