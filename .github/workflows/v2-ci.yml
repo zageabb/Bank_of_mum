@@ -5,11 +5,13 @@ on:
     branches:
       - phase-1-foundation
       - phase-2-ledger-audit
+      - phase-3-interest-engine
       - main
   pull_request:
     branches:
       - main
       - phase-1-foundation
+      - phase-2-ledger-audit
 
 jobs:
   backend:
