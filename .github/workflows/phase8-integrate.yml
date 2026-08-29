@@ -1,0 +1,63 @@
+name: Phase 8 runtime integration
+
+on:
+  push:
+    branches: [phase-8-production-hardening]
+    paths: [.github/workflows/phase8-integrate.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-8-production-hardening
+      - name: Patch application runtime
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          main = Path('backend/app/main.py')
+          text = main.read_text()
+          text = text.replace(
+              'from .phase7 import router as phase7_router\n',
+              'from .phase7 import router as phase7_router\nfrom .hardening import APP_PHASE, APP_VERSION, install_hardening\n',
+          )
+          text = text.replace(
+              'app = FastAPI(title=settings.app_name, version="2.0.0-phase7")',
+              'app = FastAPI(title=settings.app_name, version=APP_VERSION)',
+          )
+          text = text.replace(
+              'app.include_router(phase7_router)\n',
+              'app.include_router(phase7_router)\ninstall_hardening(app)\n',
+          )
+          text = text.replace('"version": "2.0.0-phase7",', '"version": APP_VERSION,')
+          text = text.replace('"phase": 7,', '"phase": APP_PHASE,')
+          text = text.replace(
+              '"ai_accounting_mode": "read_only",',
+              '"ai_accounting_mode": "read_only",\n        "production_hardening": True,',
+          )
+          text = text.replace(
+              '"balance_note": "The immutable ledger remains authoritative. Phase 7 adds audited management, statements, annual interest reporting, exports, backup/restore and integrity verification.",',
+              '"balance_note": "The immutable ledger remains authoritative. Phase 8 adds production readiness, request tracing, runtime diagnostics and hardened SQLite operation.",',
+          )
+          main.write_text(text)
+
+          phase7 = Path('backend/app/phase7.py')
+          text = phase7.read_text().replace('"phase": 7,', '"phase": 8,')
+          phase7.write_text(text)
+
+          Path('.github/workflows/phase8-integrate.yml').unlink()
+          PY
+      - name: Commit integration
+        shell: bash
+        run: |
+          git config user.name "zageabb"
+          git config user.email "zageabb@users.noreply.github.com"
+          git add backend/app/main.py backend/app/phase7.py .github/workflows/phase8-integrate.yml
+          git commit -m "Phase 8: activate runtime hardening" || exit 0
+          git push origin HEAD:phase-8-production-hardening
