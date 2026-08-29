@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Bank of Mum v2 runtime data
+data-v2/
+backend/data-v2/
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Local configuration
+.env
+backend/.env
+frontend/.env.local
