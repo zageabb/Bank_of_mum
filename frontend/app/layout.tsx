@@ -1,5 +1,6 @@
 import "./globals.css";
 import "./phase7.css";
+import "./phase8.css";
 import Phase6Navigation from "./phase6-navigation";
 
 export const metadata = {
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/scenarios">Scenarios</a>
           <a href="/ai">AI</a>
           <a href="/maintenance">Maintenance</a>
+          <a href="/system">System</a>
           <a href="/settings">Settings</a>
         </nav>
       </body>
