@@ -38,13 +38,17 @@ from .models import (
     PaymentPlan,
     PaymentPlanAccount,
     Person,
+    Scenario,
 )
 from .planning import forecast_payment_plan, plan_dict, validate_members
+from .scenarios import compare_many, compare_scenario, forecast_scenario, replace_changes, scenario_dict, validate_changes
 from .schemas import (
     AccountInterestSettingsUpdate,
     InterestRateCreate,
     PaymentPlanCreate,
     PaymentPlanUpdate,
+    ScenarioCreate,
+    ScenarioUpdate,
     TransactionCorrection,
     TransactionCreate,
     TransactionReverse,
@@ -58,7 +62,7 @@ with SessionLocal() as _startup_db:
     prepare_phase3_data(_startup_db)
 install_immutability_guards(engine)
 
-app = FastAPI(title=settings.app_name, version="2.0.0-phase4")
+app = FastAPI(title=settings.app_name, version="2.0.0-phase5")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",") if item.strip()],
@@ -116,6 +120,10 @@ def _plan_member_payload(body) -> list[dict]:
     return [item.model_dump() for item in body.members]
 
 
+def _scenario_change_payload(body) -> list[dict]:
+    return [item.model_dump() for item in body.changes]
+
+
 def _replace_plan_members(plan: PaymentPlan, validated: list[tuple[Account, int, Decimal, bool]]) -> None:
     plan.members.clear()
     for account, priority, base_payment, enabled in validated:
@@ -132,10 +140,11 @@ def health():
     return {
         "ok": True,
         "app": settings.app_name,
-        "version": "2.0.0-phase4",
+        "version": "2.0.0-phase5",
         "ledger_immutable": True,
         "interest_engine": "daily_simple",
         "payment_planning": "priority_rollover",
+        "scenario_engine": "deterministic_what_if",
     }
 
 
@@ -152,6 +161,7 @@ def bootstrap(db: Session = Depends(get_db)):
     calculations = [calculate_account(db, item.id) for item in accounts]
     audit_count = db.scalar(select(func.count(AuditEvent.id))) or 0
     plan_count = db.scalar(select(func.count(PaymentPlan.id))) or 0
+    scenario_count = db.scalar(select(func.count(Scenario.id))) or 0
     return {
         "summary": {
             "people": len(people),
@@ -165,12 +175,13 @@ def bootstrap(db: Session = Depends(get_db)):
             "total_interest_paid": round(sum(item["total_interest_paid"] for item in calculations), 2),
             "audit_events": int(audit_count),
             "payment_plans": int(plan_count),
+            "scenarios": int(scenario_count),
         },
         "people": [{"id": p.id, "name": p.name, "accounts": len(p.accounts)} for p in people],
         "accounts": [_account_dict(db, item) for item in accounts],
         "settings": {"ollama_url": settings.ollama_url, "ollama_model": settings.ollama_model},
-        "phase": 4,
-        "balance_note": "Balances use the dated interest engine. Phase 4 payment plans simulate future dated payments without posting anything to the immutable ledger.",
+        "phase": 5,
+        "balance_note": "The ledger and baseline plans remain authoritative. Phase 5 scenarios compare dated hypothetical changes without writing future payments or assumed rates to accounting history.",
     }
 
 
@@ -496,6 +507,150 @@ def payment_plan_forecast(
         raise HTTPException(404, "Payment plan not found")
     try:
         return forecast_payment_plan(db, plan, horizon_months)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/scenarios")
+def scenarios(plan_id: int | None = None, db: Session = Depends(get_db)):
+    query = select(Scenario)
+    if plan_id is not None:
+        if not db.get(PaymentPlan, plan_id):
+            raise HTTPException(404, "Payment plan not found")
+        query = query.where(Scenario.plan_id == plan_id)
+    rows = db.scalars(query.order_by(Scenario.status, Scenario.name, Scenario.id)).all()
+    return {"scenarios": [scenario_dict(item) for item in rows]}
+
+
+@app.post("/api/scenarios")
+def create_scenario(body: ScenarioCreate, db: Session = Depends(get_db)):
+    plan = db.get(PaymentPlan, body.plan_id)
+    if not plan:
+        raise HTTPException(404, "Payment plan not found")
+    duplicate = db.scalar(select(Scenario).where(Scenario.plan_id == plan.id, Scenario.name == body.name).limit(1))
+    if duplicate:
+        raise HTTPException(409, "A scenario with this name already exists for the payment plan")
+    try:
+        validated = validate_changes(db, plan, _scenario_change_payload(body))
+        scenario = Scenario(
+            plan=plan,
+            name=body.name.strip(),
+            description=body.description,
+            status=body.status,
+            created_by="local",
+        )
+        db.add(scenario)
+        replace_changes(scenario, validated)
+        db.flush()
+        snapshot = scenario_dict(scenario)
+        log_audit(
+            db,
+            entity_type="scenario",
+            entity_id=scenario.id,
+            action="scenario_created",
+            summary=f"Scenario {scenario.name} created for {plan.name}",
+            after=snapshot,
+            reason="What-if scenario created",
+            actor="local",
+        )
+        db.commit()
+        return {"scenario": scenario_dict(scenario)}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/scenarios/compare")
+def compare_scenarios_api(
+    scenario_ids: list[int] = Query(default=[]),
+    horizon_months: int = Query(default=240, ge=1, le=600),
+    db: Session = Depends(get_db),
+):
+    try:
+        return compare_many(db, scenario_ids, horizon_months)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/scenarios/{scenario_id}")
+def scenario_detail(scenario_id: int, db: Session = Depends(get_db)):
+    scenario = db.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(404, "Scenario not found")
+    return {"scenario": scenario_dict(scenario)}
+
+
+@app.put("/api/scenarios/{scenario_id}")
+def update_scenario(scenario_id: int, body: ScenarioUpdate, db: Session = Depends(get_db)):
+    scenario = db.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(404, "Scenario not found")
+    plan = db.get(PaymentPlan, body.plan_id)
+    if not plan:
+        raise HTTPException(404, "Payment plan not found")
+    duplicate = db.scalar(
+        select(Scenario).where(
+            Scenario.plan_id == plan.id,
+            Scenario.name == body.name,
+            Scenario.id != scenario_id,
+        ).limit(1)
+    )
+    if duplicate:
+        raise HTTPException(409, "A scenario with this name already exists for the payment plan")
+    before = scenario_dict(scenario)
+    try:
+        validated = validate_changes(db, plan, _scenario_change_payload(body))
+        scenario.plan = plan
+        scenario.name = body.name.strip()
+        scenario.description = body.description
+        scenario.status = body.status
+        replace_changes(scenario, validated)
+        db.flush()
+        after = scenario_dict(scenario)
+        log_audit(
+            db,
+            entity_type="scenario",
+            entity_id=scenario.id,
+            action="scenario_updated",
+            summary=f"Scenario {scenario.name} updated",
+            before=before,
+            after=after,
+            reason=body.reason,
+            actor="local",
+        )
+        db.commit()
+        return {"scenario": scenario_dict(scenario)}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/scenarios/{scenario_id}/forecast")
+def scenario_forecast_api(
+    scenario_id: int,
+    horizon_months: int = Query(default=240, ge=1, le=600),
+    db: Session = Depends(get_db),
+):
+    scenario = db.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(404, "Scenario not found")
+    try:
+        return forecast_scenario(db, scenario, horizon_months)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/scenarios/{scenario_id}/comparison")
+def scenario_comparison_api(
+    scenario_id: int,
+    horizon_months: int = Query(default=240, ge=1, le=600),
+    db: Session = Depends(get_db),
+):
+    scenario = db.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(404, "Scenario not found")
+    try:
+        return compare_scenario(db, scenario, horizon_months)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
