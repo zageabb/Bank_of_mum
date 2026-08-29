@@ -44,6 +44,7 @@ from .models import (
 )
 from .planning import forecast_payment_plan, plan_dict, validate_members
 from .phase7 import router as phase7_router
+from .hardening import APP_PHASE, APP_VERSION, install_hardening
 from .scenarios import compare_many, compare_scenario, forecast_scenario, replace_changes, scenario_dict, validate_changes
 from .schemas import (
     AccountInterestSettingsUpdate,
@@ -67,7 +68,7 @@ with SessionLocal() as _startup_db:
     prepare_phase3_data(_startup_db)
 install_immutability_guards(engine)
 
-app = FastAPI(title=settings.app_name, version="2.0.0-phase7")
+app = FastAPI(title=settings.app_name, version=APP_VERSION)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",") if item.strip()],
@@ -76,6 +77,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(phase7_router)
+install_hardening(app)
 
 
 def _account_dict(db: Session, account: Account, as_of: date | None = None) -> dict:
@@ -146,13 +148,14 @@ def health():
     return {
         "ok": True,
         "app": settings.app_name,
-        "version": "2.0.0-phase7",
+        "version": APP_VERSION,
         "ledger_immutable": True,
         "interest_engine": "daily_simple",
         "payment_planning": "priority_rollover",
         "scenario_engine": "deterministic_what_if",
         "ai": "ollama_bounded_tools",
         "ai_accounting_mode": "read_only",
+        "production_hardening": True,
     }
 
 
@@ -188,8 +191,8 @@ def bootstrap(db: Session = Depends(get_db)):
         "people": [{"id": p.id, "name": p.name, "accounts": len(p.accounts)} for p in people],
         "accounts": [_account_dict(db, item) for item in accounts],
         "settings": ai_settings_dict(db),
-        "phase": 7,
-        "balance_note": "The immutable ledger remains authoritative. Phase 7 adds audited management, statements, annual interest reporting, exports, backup/restore and integrity verification.",
+        "phase": APP_PHASE,
+        "balance_note": "The immutable ledger remains authoritative. Phase 8 adds production readiness, request tracing, runtime diagnostics and hardened SQLite operation.",
     }
 
 
