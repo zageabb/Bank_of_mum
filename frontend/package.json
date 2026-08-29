@@ -1,6 +1,6 @@
 {
   "name": "bank-of-mum-frontend",
-  "version": "2.0.0-phase3",
+  "version": "2.0.0-phase4",
   "private": true,
   "scripts": {
     "dev": "next dev -p 5075",
