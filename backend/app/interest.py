@@ -99,7 +99,7 @@ def _interest_between(
             "annual_rate": float(annual_rate),
             "day_count_convention": convention,
             "principal": float(money(principal)),
-            "interest": float(money(accrued)),
+            "interest": float(accrued),
         })
     return total, detail
 
