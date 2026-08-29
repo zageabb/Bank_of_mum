@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +13,7 @@ INTEREST_METHOD_PATTERN = "^(daily_simple)$"
 PAYMENT_ALLOCATION_PATTERN = "^(fees_interest_principal)$"
 PLAN_STRATEGY_PATTERN = "^(priority_rollover)$"
 PLAN_STATUS_PATTERN = "^(active|paused|archived)$"
-SCENARIO_STATUS_PATTERN = "^(active|archived)$"
+SCENARIO_STATUS_PATTERN = "^(draft|active|archived)$"
 SCENARIO_CHANGE_PATTERN = "^(budget_delta|budget_override|lump_sum|payment_holiday|base_payment_override|priority_override|interest_rate)$"
 
 
@@ -96,3 +97,22 @@ class ScenarioCreate(BaseModel):
 
 class ScenarioUpdate(ScenarioCreate):
     reason: str = Field(min_length=3)
+
+
+class AISettingsUpdate(BaseModel):
+    ollama_url: str = Field(min_length=7, max_length=500)
+    ollama_model: str = Field(min_length=1, max_length=240)
+    max_tool_calls: int = Field(default=6, ge=1, le=12)
+    timeout_seconds: int = Field(default=180, ge=10, le=600)
+    reason: str = Field(default="AI settings updated", min_length=3, max_length=500)
+
+
+class AIChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=30000)
+
+
+class AIChatRequest(BaseModel):
+    messages: list[AIChatMessage] = Field(min_length=1, max_length=40)
+    model: str | None = Field(default=None, max_length=240)
+    allow_scenario_proposals: bool = True
