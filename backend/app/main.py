@@ -4,11 +4,13 @@ import json
 from datetime import date
 from decimal import Decimal
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from .ai import ai_settings_dict, chat_with_tools, list_ollama_models, update_ai_settings
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from .import_legacy import import_legacy_json
@@ -44,6 +46,8 @@ from .planning import forecast_payment_plan, plan_dict, validate_members
 from .scenarios import compare_many, compare_scenario, forecast_scenario, replace_changes, scenario_dict, validate_changes
 from .schemas import (
     AccountInterestSettingsUpdate,
+    AIChatRequest,
+    AISettingsUpdate,
     InterestRateCreate,
     PaymentPlanCreate,
     PaymentPlanUpdate,
@@ -62,7 +66,7 @@ with SessionLocal() as _startup_db:
     prepare_phase3_data(_startup_db)
 install_immutability_guards(engine)
 
-app = FastAPI(title=settings.app_name, version="2.0.0-phase5")
+app = FastAPI(title=settings.app_name, version="2.0.0-phase6")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",") if item.strip()],
@@ -140,11 +144,13 @@ def health():
     return {
         "ok": True,
         "app": settings.app_name,
-        "version": "2.0.0-phase5",
+        "version": "2.0.0-phase6",
         "ledger_immutable": True,
         "interest_engine": "daily_simple",
         "payment_planning": "priority_rollover",
         "scenario_engine": "deterministic_what_if",
+        "ai": "ollama_bounded_tools",
+        "ai_accounting_mode": "read_only",
     }
 
 
@@ -179,10 +185,87 @@ def bootstrap(db: Session = Depends(get_db)):
         },
         "people": [{"id": p.id, "name": p.name, "accounts": len(p.accounts)} for p in people],
         "accounts": [_account_dict(db, item) for item in accounts],
-        "settings": {"ollama_url": settings.ollama_url, "ollama_model": settings.ollama_model},
-        "phase": 5,
-        "balance_note": "The ledger and baseline plans remain authoritative. Phase 5 scenarios compare dated hypothetical changes without writing future payments or assumed rates to accounting history.",
+        "settings": ai_settings_dict(db),
+        "phase": 6,
+        "balance_note": "The immutable ledger remains authoritative. Phase 6 AI reads deterministic accounting tools and may only prepare draft what-if scenarios for review.",
     }
+
+
+@app.get("/api/ai/capabilities")
+def ai_capabilities():
+    return {
+        "provider": "ollama",
+        "accounting_mode": "read_only",
+        "ledger_mutations": False,
+        "contractual_rate_mutations": False,
+        "scenario_proposals": "draft_only",
+        "tools": [
+            "get_portfolio_summary",
+            "list_accounts",
+            "get_account_balance",
+            "get_account_ledger",
+            "list_payment_plans",
+            "forecast_payment_plan",
+            "list_scenarios",
+            "compare_scenario",
+            "compare_scenarios",
+            "get_audit_history",
+            "propose_scenario",
+        ],
+    }
+
+
+@app.get("/api/ai/settings")
+def get_ai_settings(db: Session = Depends(get_db)):
+    return ai_settings_dict(db)
+
+
+@app.put("/api/ai/settings")
+def set_ai_settings(body: AISettingsUpdate, db: Session = Depends(get_db)):
+    try:
+        result = update_ai_settings(
+            db,
+            ollama_url=body.ollama_url,
+            ollama_model=body.ollama_model,
+            max_tool_calls=body.max_tool_calls,
+            timeout_seconds=body.timeout_seconds,
+            reason=body.reason,
+        )
+        db.commit()
+        return result
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/ai/models")
+async def get_ai_models(base_url: str | None = None, db: Session = Depends(get_db)):
+    configured = ai_settings_dict(db)
+    target = (base_url or configured["ollama_url"]).strip()
+    if not target:
+        raise HTTPException(422, "Ollama URL is required")
+    try:
+        models = await list_ollama_models(target)
+        return {"base_url": target.rstrip("/"), "models": models}
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, f"Could not query Ollama models: {exc}") from exc
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(body: AIChatRequest, db: Session = Depends(get_db)):
+    try:
+        return await chat_with_tools(
+            db,
+            [item.model_dump() for item in body.messages],
+            model_override=body.model,
+            allow_scenario_proposals=body.allow_scenario_proposals,
+        )
+    except httpx.HTTPError as exc:
+        db.rollback()
+        raise HTTPException(502, f"Ollama request failed: {exc}") from exc
+    except (ValueError, json.JSONDecodeError) as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.post("/api/admin/import-legacy")
