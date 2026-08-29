@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import Account, LedgerTransaction, Person
+from .ledger import append_transaction, log_audit
+from .models import Account, Person
 
 SAMPLE_IDS = {"alice", "bob"}
 
@@ -40,6 +41,7 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
 
     imported_accounts = 0
     imported_payments = 0
+    imported_openings = 0
     skipped: list[str] = []
 
     for path in sorted(source_root.glob("*.json")):
@@ -58,11 +60,21 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
             person = Person(name=person_name)
             db.add(person)
             db.flush()
+            log_audit(
+                db,
+                entity_type="person",
+                entity_id=person.id,
+                action="legacy_import_created",
+                summary=f"Imported person {person.name}",
+                after={"name": person.name},
+                actor="legacy_import",
+            )
 
+        principal = float(payload.get("principal") or 0)
         account = Account(
             person_id=person.id,
             name=account_name,
-            opening_principal=float(payload.get("principal") or 0),
+            opening_principal=principal,
             annual_interest_rate=float(payload.get("interest_rate") or 0),
             regular_payment=float(payload.get("payment_per_month") or 0),
             start_date=_parse_date(payload.get("start_date")),
@@ -71,19 +83,67 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
         db.add(account)
         db.flush()
         imported_accounts += 1
+        log_audit(
+            db,
+            entity_type="account",
+            entity_id=account.id,
+            action="legacy_import_created",
+            summary=f"Imported account {person.name} · {account.name}",
+            after={
+                "person": person.name,
+                "name": account.name,
+                "opening_principal": principal,
+                "annual_interest_rate": account.annual_interest_rate,
+                "regular_payment": account.regular_payment,
+                "start_date": account.start_date,
+                "legacy_id": legacy_id,
+            },
+            actor="legacy_import",
+        )
+
+        opening_date = account.start_date or date.today()
+        if principal > 0:
+            append_transaction(
+                db,
+                account_id=account.id,
+                effective_date=opening_date,
+                transaction_type="opening_balance",
+                direction="debit",
+                amount=principal,
+                note="Opening principal imported from legacy Bank of Mum",
+                reference=f"LEGACY-{legacy_id}-OPEN",
+                source="legacy_import",
+                created_by="legacy_import",
+                audit_action="legacy_opening_imported",
+            )
+            imported_openings += 1
 
         for index, payment in enumerate(payload.get("payments") or []):
-            paid_on = _parse_date(payment.get("date")) or account.start_date or date.today()
-            db.add(LedgerTransaction(
+            amount = float(payment.get("amount") or 0)
+            if amount <= 0:
+                continue
+            paid_on = _parse_date(payment.get("date")) or opening_date
+            append_transaction(
+                db,
                 account_id=account.id,
                 effective_date=paid_on,
                 transaction_type="payment",
-                amount=float(payment.get("amount") or 0),
+                direction="credit",
+                amount=amount,
                 note=str(payment.get("comment") or ""),
+                reference=f"LEGACY-{legacy_id}-PAY-{index + 1}",
                 source="legacy_import",
+                created_by="legacy_import",
                 legacy_index=index,
-            ))
+                audit_action="legacy_payment_imported",
+            )
             imported_payments += 1
 
     db.commit()
-    return {"imported_accounts": imported_accounts, "imported_payments": imported_payments, "skipped": skipped, "source": str(source_root)}
+    return {
+        "imported_accounts": imported_accounts,
+        "imported_opening_balances": imported_openings,
+        "imported_payments": imported_payments,
+        "skipped": skipped,
+        "source": str(source_root),
+    }
