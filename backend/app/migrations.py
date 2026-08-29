@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import Engine
+from datetime import date
+
+from sqlalchemy import Engine, select
+from sqlalchemy.orm import Session
 
 
 LEDGER_COLUMNS = {
@@ -37,6 +40,43 @@ def run_phase2_schema_migrations(engine: Engine) -> None:
                 "UPDATE ledger_transactions SET direction = CASE WHEN transaction_type = 'payment' THEN 'credit' ELSE 'debit' END "
                 "WHERE direction IS NULL OR direction = '' OR (transaction_type = 'payment' AND direction = 'debit')"
             )
+
+
+def prepare_phase2_data(db: Session) -> dict:
+    """Backfill hashes and add opening ledger entries for existing Phase 1 accounts."""
+    from .ledger import append_transaction, backfill_account_chain
+    from .models import Account, LedgerTransaction
+
+    accounts = db.scalars(select(Account).order_by(Account.id)).all()
+    hash_updates = 0
+    opening_entries = 0
+    for account in accounts:
+        hash_updates += backfill_account_chain(db, account.id)
+        opening = db.scalar(
+            select(LedgerTransaction)
+            .where(
+                LedgerTransaction.account_id == account.id,
+                LedgerTransaction.transaction_type == "opening_balance",
+            )
+            .limit(1)
+        )
+        if not opening and float(account.opening_principal or 0) > 0:
+            append_transaction(
+                db,
+                account_id=account.id,
+                effective_date=account.start_date or date.today(),
+                transaction_type="opening_balance",
+                direction="debit",
+                amount=account.opening_principal,
+                note="Opening principal migrated from Phase 1 account metadata",
+                reference=f"PHASE1-OPEN-{account.id}",
+                source="phase2_migration",
+                created_by="system",
+                audit_action="opening_balance_migrated",
+            )
+            opening_entries += 1
+    db.commit()
+    return {"accounts": len(accounts), "hash_updates": hash_updates, "opening_entries": opening_entries}
 
 
 def install_immutability_guards(engine: Engine) -> None:
