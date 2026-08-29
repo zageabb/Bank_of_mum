@@ -313,6 +313,43 @@ def account_balance(db: Session, account_id: int) -> float:
     return rows[-1]["running_balance"] if rows else 0.0
 
 
+def backfill_account_chain(db: Session, account_id: int) -> int:
+    """Populate/rebuild the hash chain before immutability triggers are installed."""
+    rows = db.scalars(
+        select(LedgerTransaction)
+        .where(LedgerTransaction.account_id == account_id)
+        .order_by(LedgerTransaction.id)
+    ).all()
+    expected_previous = ""
+    changed = 0
+    for item in rows:
+        calculated = _hash_payload(
+            account_id=item.account_id,
+            effective_date=item.effective_date,
+            transaction_type=item.transaction_type,
+            direction=item.direction or default_direction(item.transaction_type),
+            amount=item.amount,
+            note=item.note or "",
+            reference=item.reference or "",
+            source=item.source or "manual",
+            created_by=item.created_by or "local",
+            reverses_transaction_id=item.reverses_transaction_id,
+            correction_group=item.correction_group or "",
+            previous_hash=expected_previous,
+        )
+        if item.direction not in {"debit", "credit"}:
+            item.direction = default_direction(item.transaction_type)
+            changed += 1
+        if item.previous_hash != expected_previous:
+            item.previous_hash = expected_previous
+            changed += 1
+        if item.entry_hash != calculated:
+            item.entry_hash = calculated
+            changed += 1
+        expected_previous = calculated
+    return changed
+
+
 def verify_account_chain(db: Session, account_id: int) -> dict:
     rows = db.scalars(
         select(LedgerTransaction)
