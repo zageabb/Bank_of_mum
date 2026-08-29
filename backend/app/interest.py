@@ -56,7 +56,7 @@ def _rate_periods(db: Session, account: Account) -> list[InterestRatePeriod]:
     ).all()
 
 
-def _active_period(periods: list[InterestRatePeriod], on_date: date) -> InterestRatePeriod | None:
+def _active_period(periods: list, on_date: date):
     active = None
     for item in periods:
         if item.effective_from <= on_date:
@@ -70,7 +70,7 @@ def _interest_between(
     principal: Decimal,
     start: date,
     end: date,
-    periods: list[InterestRatePeriod],
+    periods: list,
     fallback_rate: Decimal,
     fallback_convention: str,
 ) -> tuple[Decimal, list[dict]]:
@@ -101,6 +101,7 @@ def _interest_between(
             "day_count_convention": convention,
             "principal": float(money(principal)),
             "interest": float(accrued),
+            "hypothetical_rate": bool(getattr(period, "is_hypothetical", False)) if period else False,
         })
     return total, detail
 
@@ -110,17 +111,38 @@ def calculate_account(
     account_id: int,
     as_of: date | None = None,
     hypothetical_payments: list[dict] | None = None,
+    hypothetical_rate_periods: list[dict] | None = None,
 ) -> dict:
-    """Replay one account to a date, optionally with in-memory forecast payments.
+    """Replay one account to a date with optional in-memory forecast assumptions.
 
-    Hypothetical payments never enter the SQLAlchemy session or immutable ledger. They are
-    merged into the dated event stream only for this calculation call.
+    Hypothetical payments and rates never enter the SQLAlchemy session or immutable accounting
+    tables. They are merged into the dated replay only for this calculation call.
     """
     account = db.get(Account, account_id)
     if not account:
         raise ValueError("Account not found")
     target = as_of or date.today()
-    periods = _rate_periods(db, account)
+    periods: list = list(_rate_periods(db, account))
+    max_rate_id = max((item.id for item in periods), default=0)
+    for index, assumed in enumerate(hypothetical_rate_periods or [], start=1):
+        effective_from = assumed.get("effective_from")
+        if isinstance(effective_from, str):
+            effective_from = date.fromisoformat(effective_from)
+        if not isinstance(effective_from, date):
+            continue
+        periods.append(SimpleNamespace(
+            id=max_rate_id + index,
+            account_id=account_id,
+            effective_from=effective_from,
+            annual_rate=_rate(assumed.get("annual_rate", 0)),
+            day_count_convention=str(assumed.get("day_count_convention") or account.day_count_convention or "actual_365"),
+            reason=str(assumed.get("reason") or "Scenario rate assumption"),
+            created_by="scenario",
+            created_at=None,
+            is_hypothetical=True,
+        ))
+    periods.sort(key=lambda item: (item.effective_from, item.id))
+
     transactions = list(db.scalars(
         select(LedgerTransaction)
         .where(LedgerTransaction.account_id == account_id, LedgerTransaction.effective_date <= target)
@@ -292,7 +314,7 @@ def calculate_account(
     }
 
 
-def rate_period_dict(item: InterestRatePeriod) -> dict:
+def rate_period_dict(item) -> dict:
     return {
         "id": item.id,
         "account_id": item.account_id,
@@ -301,5 +323,6 @@ def rate_period_dict(item: InterestRatePeriod) -> dict:
         "day_count_convention": item.day_count_convention,
         "reason": item.reason,
         "created_by": item.created_by,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "created_at": item.created_at.isoformat() if getattr(item, "created_at", None) else None,
+        "is_hypothetical": bool(getattr(item, "is_hypothetical", False)),
     }

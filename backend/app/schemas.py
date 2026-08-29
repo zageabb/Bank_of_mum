@@ -12,6 +12,8 @@ INTEREST_METHOD_PATTERN = "^(daily_simple)$"
 PAYMENT_ALLOCATION_PATTERN = "^(fees_interest_principal)$"
 PLAN_STRATEGY_PATTERN = "^(priority_rollover)$"
 PLAN_STATUS_PATTERN = "^(active|paused|archived)$"
+SCENARIO_STATUS_PATTERN = "^(active|archived)$"
+SCENARIO_CHANGE_PATTERN = "^(budget_delta|budget_override|lump_sum|payment_holiday|base_payment_override|priority_override|interest_rate)$"
 
 
 class TransactionCreate(BaseModel):
@@ -71,4 +73,26 @@ class PaymentPlanCreate(BaseModel):
 
 
 class PaymentPlanUpdate(PaymentPlanCreate):
+    reason: str = Field(min_length=3)
+
+
+class ScenarioChangeInput(BaseModel):
+    change_type: str = Field(pattern=SCENARIO_CHANGE_PATTERN)
+    account_id: int | None = Field(default=None, gt=0)
+    effective_from: date
+    effective_to: date | None = None
+    value: Decimal | None = None
+    day_count_convention: str = Field(default="actual_365", pattern=DAY_COUNT_PATTERN)
+    note: str = ""
+
+
+class ScenarioCreate(BaseModel):
+    plan_id: int = Field(gt=0)
+    name: str = Field(min_length=1, max_length=180)
+    description: str = ""
+    status: str = Field(default="active", pattern=SCENARIO_STATUS_PATTERN)
+    changes: list[ScenarioChangeInput] = Field(default_factory=list)
+
+
+class ScenarioUpdate(ScenarioCreate):
     reason: str = Field(min_length=3)

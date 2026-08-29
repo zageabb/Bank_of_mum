@@ -49,6 +49,7 @@ class Account(Base):
         order_by=lambda: (InterestRatePeriod.effective_from, InterestRatePeriod.id),
     )
     payment_plan_memberships: Mapped[list[PaymentPlanAccount]] = relationship(back_populates="account")
+    scenario_changes: Mapped[list[ScenarioChange]] = relationship(back_populates="account")
 
 
 class LedgerTransaction(Base):
@@ -104,6 +105,11 @@ class PaymentPlan(Base):
         cascade="all, delete-orphan",
         order_by=lambda: (PaymentPlanAccount.priority, PaymentPlanAccount.id),
     )
+    scenarios: Mapped[list[Scenario]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by=lambda: (Scenario.name, Scenario.id),
+    )
 
 
 class PaymentPlanAccount(Base):
@@ -117,6 +123,40 @@ class PaymentPlanAccount(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     plan: Mapped[PaymentPlan] = relationship(back_populates="members")
     account: Mapped[Account] = relationship(back_populates="payment_plan_memberships")
+
+
+class Scenario(Base):
+    __tablename__ = "scenarios"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("payment_plans.id"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), default="active")
+    created_by: Mapped[str] = mapped_column(String(120), default="local")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    plan: Mapped[PaymentPlan] = relationship(back_populates="scenarios")
+    changes: Mapped[list[ScenarioChange]] = relationship(
+        back_populates="scenario",
+        cascade="all, delete-orphan",
+        order_by=lambda: (ScenarioChange.effective_from, ScenarioChange.id),
+    )
+
+
+class ScenarioChange(Base):
+    __tablename__ = "scenario_changes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("scenarios.id"), index=True)
+    change_type: Mapped[str] = mapped_column(String(40), index=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
+    effective_from: Mapped[date] = mapped_column(Date, index=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    value: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    day_count_convention: Mapped[str] = mapped_column(String(30), default="actual_365")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    scenario: Mapped[Scenario] = relationship(back_populates="changes")
+    account: Mapped[Account | None] = relationship(back_populates="scenario_changes")
 
 
 class AuditEvent(Base):
