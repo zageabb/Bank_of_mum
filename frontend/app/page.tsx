@@ -2,11 +2,14 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Summary = { people:number; accounts:number; opening_principal:number; recorded_payments:number; ledger_balance:number; audit_events:number };
-type Account = { id:number; person:string; name:string; opening_principal:number; annual_interest_rate:number; regular_payment:number; start_date?:string|null; status:string; current_balance:number };
+type Summary = { people:number; accounts:number; opening_principal:number; recorded_payments:number; ledger_balance:number; outstanding_principal:number; accrued_interest:number; total_interest_accrued:number; total_interest_paid:number; audit_events:number };
+type Account = { id:number; person:string; name:string; opening_principal:number; annual_interest_rate:number; regular_payment:number; start_date?:string|null; status:string; current_balance:number; principal_balance:number; accrued_interest:number; fees:number; nominal_ledger_balance:number; calculated_as_of:string; interest_method:string; day_count_convention:string; payment_allocation:string };
 type Bootstrap = { summary:Summary; accounts:Account[]; settings:{ollama_url:string;ollama_model:string}; balance_note:string; phase:number };
 type LedgerRow = { id:number; account_id:number; person:string; account:string; effective_date:string; transaction_type:string; direction:"debit"|"credit"; amount:number; delta:number; running_balance:number; note:string; reference:string; source:string; created_by:string; reverses_transaction_id:number|null; correction_group:string; entry_hash:string; is_reversed:boolean; is_reversal:boolean };
 type AuditEvent = { id:number; entity_type:string; entity_id:number; action:string; summary:string; reason:string; actor:string; created_at:string };
+type RatePeriod = { id:number; effective_from:string; annual_rate:number; day_count_convention:string; reason:string };
+type CalcRow = { transaction_id:number; date:string; type:string; direction:string; amount:number; note:string; interest_accrual_before_transaction:number; allocated_to_fees:number; allocated_to_interest:number; allocated_to_principal:number; principal_after:number; interest_after:number; fees_after:number; balance_after:number; reverses_transaction_id:number|null };
+type Calculation = { account_id:number; as_of:string; principal:number; accrued_interest:number; fees:number; unapplied_credit:number; total_balance:number; total_interest_accrued:number; total_interest_paid:number; interest_since_last_transaction:number; timeline:CalcRow[]; rate_periods:RatePeriod[]; interest_method:string; day_count_convention:string; payment_allocation:string };
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 const money = new Intl.NumberFormat("en-GB", { style:"currency", currency:"GBP" });
@@ -30,32 +33,52 @@ export default function Home(){
   const [paymentDate,setPaymentDate]=useState(today());
   const [paymentAmount,setPaymentAmount]=useState("");
   const [paymentNote,setPaymentNote]=useState("");
+  const [asOf,setAsOf]=useState(today());
+  const [calculation,setCalculation]=useState<Calculation|null>(null);
+  const [rateDate,setRateDate]=useState(today());
+  const [rateValue,setRateValue]=useState("");
+  const [rateConvention,setRateConvention]=useState("actual_365");
+  const [rateReason,setRateReason]=useState("Interest rate change");
 
   async function refresh(){
     try{
       const [boot,ledgerResult,auditResult]=await Promise.all([api("/bootstrap"),api("/ledger"),api("/audit")]);
       setData(boot);setLedger(ledgerResult.transactions);setAudit(auditResult.events);setError("");
-      if(!accountId&&boot.accounts.length)setAccountId(String(boot.accounts[0].id));
+      const chosen=accountId||String(boot.accounts[0]?.id||"");
+      if(!accountId&&chosen)setAccountId(chosen);
+      if(chosen){const calc=await api(`/accounts/${chosen}/calculation?as_of=${asOf}`);setCalculation(calc)}
     }catch(reason){setError(reason instanceof Error?reason.message:"Backend unavailable")}
   }
 
-  useEffect(()=>{void refresh()},[]);
+  async function loadCalculation(id:string, dateValue=asOf){
+    if(!id)return;
+    try{setCalculation(await api(`/accounts/${id}/calculation?as_of=${dateValue}`));setError("")}catch(reason){setError(reason instanceof Error?reason.message:"Could not calculate account")}
+  }
 
+  useEffect(()=>{void refresh()},[]);
   const payments=useMemo(()=>ledger.filter(item=>item.transaction_type==="payment"),[ledger]);
+  const selectedAccount=data?.accounts.find(item=>String(item.id)===accountId);
 
   async function addPayment(event:FormEvent){
     event.preventDefault();
     if(!accountId||!paymentAmount)return;
     try{
-      await api(`/accounts/${accountId}/transactions`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({effective_date:paymentDate,transaction_type:"payment",amount:paymentAmount,direction:"credit",note:paymentNote,source:"manual",reason:"Payment recorded in Bank of Mum"})});
-      setPaymentAmount("");setPaymentNote("");setNotice("Payment posted to the immutable ledger");await refresh();
+      const result=await api(`/accounts/${accountId}/transactions`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({effective_date:paymentDate,transaction_type:"payment",amount:paymentAmount,direction:"credit",note:paymentNote,source:"manual",reason:"Payment recorded in Bank of Mum"})});
+      setPaymentAmount("");setPaymentNote("");setCalculation(result.calculation);setNotice("Payment posted and interest recalculated from the dated ledger");await refresh();
     }catch(reason){setError(reason instanceof Error?reason.message:"Could not add payment")}
   }
 
+  async function addRate(event:FormEvent){
+    event.preventDefault();if(!accountId||!rateValue)return;
+    try{
+      const result=await api(`/accounts/${accountId}/rates`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({effective_from:rateDate,annual_rate:rateValue,day_count_convention:rateConvention,reason:rateReason})});
+      setCalculation(result.calculation);setNotice(`New interest rate applied from ${new Date(`${rateDate}T00:00:00`).toLocaleDateString("en-GB")}`);await refresh();
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not add interest rate")}
+  }
+
   async function reverse(row:LedgerRow){
-    const reason=window.prompt(`Reason for reversing transaction #${row.id}`)?.trim();
-    if(!reason)return;
-    try{await api(`/transactions/${row.id}/reverse`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});setNotice(`Transaction #${row.id} reversed without deleting the original`);await refresh()}catch(reason){setError(reason instanceof Error?reason.message:"Could not reverse transaction")}
+    const reason=window.prompt(`Reason for reversing transaction #${row.id}`)?.trim();if(!reason)return;
+    try{await api(`/transactions/${row.id}/reverse`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});setNotice(`Transaction #${row.id} reversed and account recalculated`);await refresh()}catch(reason){setError(reason instanceof Error?reason.message:"Could not reverse transaction")}
   }
 
   async function correct(row:LedgerRow){
@@ -64,52 +87,45 @@ export default function Home(){
     const note=window.prompt("Correct note",row.note||"")??row.note;
     const reason=window.prompt("Reason for correction")?.trim();if(!reason)return;
     const type=row.transaction_type==="reversal"?"adjustment":row.transaction_type;
-    try{await api(`/transactions/${row.id}/correct`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({effective_date:effectiveDate,transaction_type:type,amount,direction:row.direction,note,reason})});setNotice(`Transaction #${row.id} corrected by reversal and replacement`);await refresh()}catch(reason){setError(reason instanceof Error?reason.message:"Could not correct transaction")}
+    try{await api(`/transactions/${row.id}/correct`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({effective_date:effectiveDate,transaction_type:type,amount,direction:row.direction,note,reason})});setNotice(`Transaction #${row.id} corrected; all later interest recalculated`);await refresh()}catch(reason){setError(reason instanceof Error?reason.message:"Could not correct transaction")}
   }
 
   function Dashboard(){return <>
     <section className="cards">
-      <article><small>LEDGER BALANCE</small><strong>{money.format(data?.summary.ledger_balance||0)}</strong><span>Calculated from immutable entries</span></article>
-      <article><small>OPENING PRINCIPAL</small><strong>{money.format(data?.summary.opening_principal||0)}</strong><span>{data?.summary.accounts||0} accounts</span></article>
-      <article><small>RECORDED PAYMENTS</small><strong>{money.format(data?.summary.recorded_payments||0)}</strong><span>{payments.length} payment entries</span></article>
+      <article><small>CALCULATED BALANCE</small><strong>{money.format(data?.summary.ledger_balance||0)}</strong><span>Principal + accrued interest + fees</span></article>
+      <article><small>PRINCIPAL OUTSTANDING</small><strong>{money.format(data?.summary.outstanding_principal||0)}</strong><span>{data?.summary.accounts||0} accounts</span></article>
+      <article><small>ACCRUED INTEREST</small><strong>{money.format(data?.summary.accrued_interest||0)}</strong><span>{money.format(data?.summary.total_interest_paid||0)} interest paid</span></article>
       <article><small>AUDIT EVENTS</small><strong>{data?.summary.audit_events||0}</strong><span>Append-only history</span></article>
     </section>
     <section className="grid">
-      <div className="panel accounts-panel"><div className="panel-head"><div><p className="eyebrow">CURRENT DATA</p><h2>Accounts</h2></div><span>{data?.accounts.length||0}</span></div>
-        <div className="account-list">{data?.accounts.length?data.accounts.map(a=><article key={a.id}><div className="account-icon">£</div><div><strong>{a.person} · {a.name}</strong><p>{a.annual_interest_rate}% APR · {money.format(a.regular_payment)} regular payment</p></div><div className="amount"><strong>{money.format(a.current_balance)}</strong><small>{a.status}</small></div></article>):<div className="empty">No v2 accounts yet. Run the legacy importer once to migrate existing JSON records.</div>}</div>
+      <div className="panel accounts-panel"><div className="panel-head"><div><p className="eyebrow">AS OF TODAY</p><h2>Accounts</h2></div><span>{data?.accounts.length||0}</span></div>
+        <div className="account-list">{data?.accounts.length?data.accounts.map(a=><article key={a.id} onClick={()=>{setAccountId(String(a.id));setActive("Accounts");void loadCalculation(String(a.id))}}><div className="account-icon">£</div><div><strong>{a.person} · {a.name}</strong><p>{a.annual_interest_rate}% original APR · {money.format(a.regular_payment)} regular payment · interest {money.format(a.accrued_interest)}</p></div><div className="amount"><strong>{money.format(a.current_balance)}</strong><small>{a.status}</small></div></article>):<div className="empty">No v2 accounts yet. Run the legacy importer once to migrate existing JSON records.</div>}</div>
       </div>
       <div className="panel ai-panel"><div className="panel-head"><div><p className="eyebrow">AI FOUNDATION</p><h2>Assistant</h2></div><span>Phase 6</span></div>
-        <div className="ai-body"><div className="spark">✦</div><h3>Accounting-aware AI foundation</h3><p>AI remains read-only until its tool layer is activated. The model and server defaults are already available to the new app.</p><dl><div><dt>Ollama server</dt><dd>{data?.settings.ollama_url||"—"}</dd></div><div><dt>Model</dt><dd>{data?.settings.ollama_model||"—"}</dd></div></dl><button disabled>Ask Bank of Mum</button></div>
+        <div className="ai-body"><div className="spark">✦</div><h3>Accounting-aware AI foundation</h3><p>The deterministic calculation engine will be exposed to AI as tools later; the LLM will not perform the accounting maths itself.</p><dl><div><dt>Ollama server</dt><dd>{data?.settings.ollama_url||"—"}</dd></div><div><dt>Model</dt><dd>{data?.settings.ollama_model||"—"}</dd></div></dl><button disabled>Ask Bank of Mum</button></div>
       </div>
-    </section>
-    <div className="notice">{data?.balance_note}</div>
+    </section><div className="notice">{data?.balance_note}</div>
   </>}
 
-  function Payments(){return <section className="split-view">
-    <div className="panel"><div className="panel-head"><div><p className="eyebrow">POST ENTRY</p><h2>Record payment</h2></div><span>Credit</span></div>
-      <form className="entry-form" onSubmit={addPayment}>
-        <label>Account<select value={accountId} onChange={e=>setAccountId(e.target.value)}>{data?.accounts.map(a=><option key={a.id} value={a.id}>{a.person} · {a.name}</option>)}</select></label>
-        <div className="two"><label>Effective date<input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/></label><label>Amount<input type="number" min="0.01" step="0.01" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)} placeholder="0.00"/></label></div>
-        <label>Note<input value={paymentNote} onChange={e=>setPaymentNote(e.target.value)} placeholder="Bank transfer, cash, regular payment…"/></label>
-        <button className="primary" type="submit">Post payment</button><p className="form-hint">Payments are never edited or deleted after posting. Corrections create reversal and replacement entries.</p>
-      </form>
+  function Accounts(){return <section className="account-workspace">
+    <div className="panel account-selector"><div className="panel-head"><div><p className="eyebrow">ACCOUNT</p><h2>Interest calculation</h2></div><span>Phase 3</span></div><div className="entry-form">
+      <label>Account<select value={accountId} onChange={e=>{setAccountId(e.target.value);void loadCalculation(e.target.value)}}>{data?.accounts.map(a=><option key={a.id} value={a.id}>{a.person} · {a.name}</option>)}</select></label>
+      <label>Calculate balance as at<input type="date" value={asOf} onChange={e=>{setAsOf(e.target.value);void loadCalculation(accountId,e.target.value)}}/></label>
+      <div className="calculation-cards"><div><small>PRINCIPAL</small><strong>{money.format(calculation?.principal||0)}</strong></div><div><small>ACCRUED INTEREST</small><strong>{money.format(calculation?.accrued_interest||0)}</strong></div><div><small>TOTAL BALANCE</small><strong>{money.format(calculation?.total_balance||0)}</strong></div></div>
+      <p className="form-hint">{selectedAccount?.interest_method.replaceAll("_"," ")} · {selectedAccount?.payment_allocation.replaceAll("_"," → ")}. Backdated entries cause the full history to be replayed.</p>
     </div>
-    <div className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">HISTORY</p><h2>Recent payments</h2></div><span>{payments.length}</span></div><LedgerTable rows={payments.slice(0,15)} onReverse={reverse} onCorrect={correct}/></div>
+    <form className="entry-form rate-form" onSubmit={addRate}><h3>New rate period</h3><div className="two"><label>Effective from<input type="date" value={rateDate} onChange={e=>setRateDate(e.target.value)}/></label><label>Annual rate %<input type="number" min="0" max="100" step="0.001" value={rateValue} onChange={e=>setRateValue(e.target.value)} placeholder="5.000"/></label></div><label>Day count<select value={rateConvention} onChange={e=>setRateConvention(e.target.value)}><option value="actual_365">Actual / 365</option><option value="actual_366">Actual / 366</option><option value="actual_actual">Actual / Actual</option><option value="30_360">30 / 360</option></select></label><label>Reason<input value={rateReason} onChange={e=>setRateReason(e.target.value)}/></label><button className="primary">Add rate period</button><p className="form-hint">Rates are append-only and audited. A later entry can supersede an earlier rate from any effective date.</p></form></div>
+    <div className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">RECALCULATION</p><h2>Payment allocation</h2></div><span>{calculation?.as_of||asOf}</span></div><div className="rate-strip">{calculation?.rate_periods.map(rate=><div key={rate.id}><strong>{rate.annual_rate}%</strong><span>from {new Date(`${rate.effective_from}T00:00:00`).toLocaleDateString("en-GB")}</span><small>{rate.day_count_convention.replaceAll("_"," /")}</small></div>)}</div><CalculationTable rows={calculation?.timeline||[]}/></div>
   </section>}
 
-  function Ledger(){return <div className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">SOURCE OF TRUTH</p><h2>Immutable ledger</h2></div><span>{ledger.length} entries</span></div><div className="integrity-note">Every entry is append-only and hash-chained. Reversals remain visible beside the original transaction.</div><LedgerTable rows={ledger} onReverse={reverse} onCorrect={correct}/></div>}
-
+  function Payments(){return <section className="split-view"><div className="panel"><div className="panel-head"><div><p className="eyebrow">POST ENTRY</p><h2>Record payment</h2></div><span>Credit</span></div><form className="entry-form" onSubmit={addPayment}><label>Account<select value={accountId} onChange={e=>setAccountId(e.target.value)}>{data?.accounts.map(a=><option key={a.id} value={a.id}>{a.person} · {a.name}</option>)}</select></label><div className="two"><label>Effective date<input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/></label><label>Amount<input type="number" min="0.01" step="0.01" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)} placeholder="0.00"/></label></div><label>Note<input value={paymentNote} onChange={e=>setPaymentNote(e.target.value)} placeholder="Bank transfer, cash, regular payment…"/></label><button className="primary" type="submit">Post payment</button><p className="form-hint">The payment date controls interest. Posting or correcting a backdated payment recalculates all subsequent allocations.</p></form></div><div className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">HISTORY</p><h2>Recent payments</h2></div><span>{payments.length}</span></div><LedgerTable rows={payments.slice(0,15)} onReverse={reverse} onCorrect={correct}/></div></section>}
+  function Ledger(){return <div className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">SOURCE OF TRUTH</p><h2>Immutable ledger</h2></div><span>{ledger.length} entries</span></div><div className="integrity-note">The ledger remains immutable. Interest is deterministically derived from ledger dates and contractual rate periods.</div><LedgerTable rows={ledger} onReverse={reverse} onCorrect={correct}/></div>}
   function Audit(){return <div className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">CONTROL HISTORY</p><h2>Audit trail</h2></div><span>{audit.length} events</span></div><div className="audit-list">{audit.map(item=><article key={item.id}><div className="audit-mark">⌁</div><div><strong>{item.summary}</strong><p>{item.action.replaceAll("_"," ")} · {item.entity_type} #{item.entity_id}{item.reason?` · ${item.reason}`:""}</p></div><div className="audit-meta"><span>{item.actor}</span><small>{new Date(item.created_at).toLocaleString("en-GB")}</small></div></article>)}{!audit.length&&<div className="empty">No audit events yet.</div>}</div></div>}
 
-  const content=active==="Dashboard"?<Dashboard/>:active==="Payments"?<Payments/>:active==="Ledger"?<Ledger/>:active==="Audit"?<Audit/>:<div className="coming"><h2>{active}</h2><p>This workspace is reserved for a later development phase.</p></div>;
-
-  return <div className="app-shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">BM</span><span>Bank of Mum</span></div><div className="workspace-title">Family accounting workspace <span>Phase 2 · immutable ledger & audit</span></div><div className={`connection ${data?"online":""}`}><i/>{data?"Connected":"Connecting"}</div></header>
-    <aside className="rail">{nav.map(item=><button key={item} onClick={()=>setActive(item)} className={active===item?"active":""}><span>{item.slice(0,1)}</span><small>{item}</small></button>)}</aside>
-    <main className="workspace"><section className="page-head"><div><p className="eyebrow">BANK OF MUM</p><h1>{active}</h1><p>Transaction-led lending, accounting and forecasting.</p></div><button className="primary" onClick={()=>setActive("Payments")}>+ Payment</button></section>{error&&<div className="notice error">{error}</div>}{notice&&<div className="notice success">{notice}</div>}{content}</main>
-  </div>
+  const content=active==="Dashboard"?<Dashboard/>:active==="Accounts"?<Accounts/>:active==="Payments"?<Payments/>:active==="Ledger"?<Ledger/>:active==="Audit"?<Audit/>:<div className="coming"><h2>{active}</h2><p>This workspace is reserved for a later development phase.</p></div>;
+  return <div className="app-shell"><header className="topbar"><div className="brand"><span className="brand-mark">BM</span><span>Bank of Mum</span></div><div className="workspace-title">Family accounting workspace <span>Phase 3 · date-sensitive interest</span></div><div className={`connection ${data?"online":""}`}><i/>{data?"Connected":"Connecting"}</div></header><aside className="rail">{nav.map(item=><button key={item} onClick={()=>setActive(item)} className={active===item?"active":""}><span>{item.slice(0,1)}</span><small>{item}</small></button>)}</aside><main className="workspace"><section className="page-head"><div><p className="eyebrow">BANK OF MUM</p><h1>{active}</h1><p>Transaction-led lending, exact dated interest and auditable recalculation.</p></div><button className="primary" onClick={()=>setActive("Payments")}>+ Payment</button></section>{error&&<div className="notice error">{error}</div>}{notice&&<div className="notice success">{notice}</div>}{content}</main></div>
 }
 
-function LedgerTable({rows,onReverse,onCorrect}:{rows:LedgerRow[];onReverse:(row:LedgerRow)=>void;onCorrect:(row:LedgerRow)=>void}){
-  return <div className="table-scroll"><table className="ledger-table"><thead><tr><th>Date</th><th>Account</th><th>Type</th><th>Direction</th><th>Amount</th><th>Balance</th><th>Reference</th><th/></tr></thead><tbody>{rows.map(row=><tr key={row.id} className={row.is_reversed?"reversed":""}><td>{new Date(`${row.effective_date}T00:00:00`).toLocaleDateString("en-GB")}</td><td><strong>{row.person} · {row.account}</strong><small>{row.note||`Transaction #${row.id}`}</small></td><td>{row.transaction_type.replaceAll("_"," ")}{row.is_reversal&&<small>reverses #{row.reverses_transaction_id}</small>}</td><td><span className={`direction ${row.direction}`}>{row.direction}</span></td><td className="money">{money.format(row.amount)}</td><td className="money">{money.format(row.running_balance)}</td><td><code>{row.reference||`#${row.id}`}</code></td><td><div className="row-actions"><button onClick={()=>onCorrect(row)}>Correct</button><button onClick={()=>onReverse(row)}>Reverse</button></div></td></tr>)}{!rows.length&&<tr><td colSpan={8}><div className="empty">No ledger entries.</div></td></tr>}</tbody></table></div>
-}
+function CalculationTable({rows}:{rows:CalcRow[]}){return <div className="table-scroll"><table className="ledger-table calculation-table"><thead><tr><th>Date</th><th>Event</th><th>Amount</th><th>Interest accrued</th><th>To interest</th><th>To principal</th><th>Principal</th><th>Interest</th><th>Balance</th></tr></thead><tbody>{rows.map(row=><tr key={row.transaction_id}><td>{new Date(`${row.date}T00:00:00`).toLocaleDateString("en-GB")}</td><td><strong>{row.type.replaceAll("_"," ")}</strong><small>{row.note||`Transaction #${row.transaction_id}`}{row.reverses_transaction_id?` · reverses #${row.reverses_transaction_id}`:""}</small></td><td className="money">{money.format(row.amount)}</td><td className="money">{money.format(row.interest_accrual_before_transaction)}</td><td className="money">{money.format(row.allocated_to_interest)}</td><td className="money">{money.format(row.allocated_to_principal)}</td><td className="money">{money.format(row.principal_after)}</td><td className="money">{money.format(row.interest_after)}</td><td className="money"><strong>{money.format(row.balance_after)}</strong></td></tr>)}{!rows.length&&<tr><td colSpan={9}><div className="empty">No transactions before this calculation date.</div></td></tr>}</tbody></table></div>}
+
+function LedgerTable({rows,onReverse,onCorrect}:{rows:LedgerRow[];onReverse:(row:LedgerRow)=>void;onCorrect:(row:LedgerRow)=>void}){return <div className="table-scroll"><table className="ledger-table"><thead><tr><th>Date</th><th>Account</th><th>Type</th><th>Direction</th><th>Amount</th><th>Nominal balance</th><th>Reference</th><th/></tr></thead><tbody>{rows.map(row=><tr key={row.id} className={row.is_reversed?"reversed":""}><td>{new Date(`${row.effective_date}T00:00:00`).toLocaleDateString("en-GB")}</td><td><strong>{row.person} · {row.account}</strong><small>{row.note||`Transaction #${row.id}`}</small></td><td>{row.transaction_type.replaceAll("_"," ")}{row.is_reversal&&<small>reverses #{row.reverses_transaction_id}</small>}</td><td><span className={`direction ${row.direction}`}>{row.direction}</span></td><td className="money">{money.format(row.amount)}</td><td className="money">{money.format(row.running_balance)}</td><td><code>{row.reference||`#${row.id}`}</code></td><td><div className="row-actions"><button onClick={()=>onCorrect(row)}>Correct</button><button onClick={()=>onReverse(row)}>Reverse</button></div></td></tr>)}{!rows.length&&<tr><td colSpan={8}><div className="empty">No ledger entries.</div></td></tr>}</tbody></table></div>}

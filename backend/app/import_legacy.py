@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .ledger import append_transaction, log_audit
-from .models import Account, Person
+from .models import Account, InterestRatePeriod, Person
 
 SAMPLE_IDS = {"alice", "bob"}
 
@@ -42,6 +43,7 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
     imported_accounts = 0
     imported_payments = 0
     imported_openings = 0
+    imported_rates = 0
     skipped: list[str] = []
 
     for path in sorted(source_root.glob("*.json")):
@@ -71,14 +73,18 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
             )
 
         principal = float(payload.get("principal") or 0)
+        annual_rate = Decimal(str(payload.get("interest_rate") or 0))
         account = Account(
             person_id=person.id,
             name=account_name,
             opening_principal=principal,
-            annual_interest_rate=float(payload.get("interest_rate") or 0),
+            annual_interest_rate=float(annual_rate),
             regular_payment=float(payload.get("payment_per_month") or 0),
             start_date=_parse_date(payload.get("start_date")),
             legacy_id=legacy_id,
+            interest_method="daily_simple",
+            day_count_convention="actual_365",
+            payment_allocation="fees_interest_principal",
         )
         db.add(account)
         db.flush()
@@ -102,6 +108,32 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
         )
 
         opening_date = account.start_date or date.today()
+        rate_period = InterestRatePeriod(
+            account_id=account.id,
+            effective_from=opening_date,
+            annual_rate=annual_rate,
+            day_count_convention=account.day_count_convention,
+            reason="Imported legacy contractual rate",
+            created_by="legacy_import",
+        )
+        db.add(rate_period)
+        db.flush()
+        imported_rates += 1
+        log_audit(
+            db,
+            entity_type="interest_rate_period",
+            entity_id=rate_period.id,
+            action="legacy_rate_imported",
+            summary=f"Imported rate {annual_rate}% effective {opening_date.isoformat()}",
+            after={
+                "account_id": account.id,
+                "effective_from": opening_date.isoformat(),
+                "annual_rate": str(annual_rate),
+                "day_count_convention": account.day_count_convention,
+            },
+            actor="legacy_import",
+        )
+
         if principal > 0:
             append_transaction(
                 db,
@@ -143,6 +175,7 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
     return {
         "imported_accounts": imported_accounts,
         "imported_opening_balances": imported_openings,
+        "imported_interest_rates": imported_rates,
         "imported_payments": imported_payments,
         "skipped": skipped,
         "source": str(source_root),

@@ -34,12 +34,19 @@ class Account(Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="active")
     legacy_id: Mapped[str | None] = mapped_column(String(180), unique=True, nullable=True)
+    interest_method: Mapped[str] = mapped_column(String(30), default="daily_simple")
+    day_count_convention: Mapped[str] = mapped_column(String(30), default="actual_365")
+    payment_allocation: Mapped[str] = mapped_column(String(80), default="fees_interest_principal")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     person: Mapped[Person] = relationship(back_populates="accounts")
     transactions: Mapped[list[LedgerTransaction]] = relationship(
         back_populates="account",
         foreign_keys="LedgerTransaction.account_id",
         order_by=lambda: (LedgerTransaction.effective_date, LedgerTransaction.id),
+    )
+    interest_rates: Mapped[list[InterestRatePeriod]] = relationship(
+        back_populates="account",
+        order_by=lambda: (InterestRatePeriod.effective_from, InterestRatePeriod.id),
     )
 
 
@@ -63,6 +70,19 @@ class LedgerTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     account: Mapped[Account] = relationship(back_populates="transactions", foreign_keys=[account_id])
     reversed_transaction: Mapped[LedgerTransaction | None] = relationship(remote_side=[id], foreign_keys=[reverses_transaction_id], uselist=False)
+
+
+class InterestRatePeriod(Base):
+    __tablename__ = "interest_rate_periods"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    effective_from: Mapped[date] = mapped_column(Date, index=True)
+    annual_rate: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    day_count_convention: Mapped[str] = mapped_column(String(30), default="actual_365")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(120), default="local")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    account: Mapped[Account] = relationship(back_populates="interest_rates")
 
 
 class AuditEvent(Base):
