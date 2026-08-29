@@ -43,6 +43,7 @@ from .models import (
     Scenario,
 )
 from .planning import forecast_payment_plan, plan_dict, validate_members
+from .phase7 import router as phase7_router
 from .scenarios import compare_many, compare_scenario, forecast_scenario, replace_changes, scenario_dict, validate_changes
 from .schemas import (
     AccountInterestSettingsUpdate,
@@ -66,7 +67,7 @@ with SessionLocal() as _startup_db:
     prepare_phase3_data(_startup_db)
 install_immutability_guards(engine)
 
-app = FastAPI(title=settings.app_name, version="2.0.0-phase6")
+app = FastAPI(title=settings.app_name, version="2.0.0-phase7")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",") if item.strip()],
@@ -74,6 +75,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(phase7_router)
 
 
 def _account_dict(db: Session, account: Account, as_of: date | None = None) -> dict:
@@ -144,7 +146,7 @@ def health():
     return {
         "ok": True,
         "app": settings.app_name,
-        "version": "2.0.0-phase6",
+        "version": "2.0.0-phase7",
         "ledger_immutable": True,
         "interest_engine": "daily_simple",
         "payment_planning": "priority_rollover",
@@ -186,8 +188,8 @@ def bootstrap(db: Session = Depends(get_db)):
         "people": [{"id": p.id, "name": p.name, "accounts": len(p.accounts)} for p in people],
         "accounts": [_account_dict(db, item) for item in accounts],
         "settings": ai_settings_dict(db),
-        "phase": 6,
-        "balance_note": "The immutable ledger remains authoritative. Phase 6 AI reads deterministic accounting tools and may only prepare draft what-if scenarios for review.",
+        "phase": 7,
+        "balance_note": "The immutable ledger remains authoritative. Phase 7 adds audited management, statements, annual interest reporting, exports, backup/restore and integrity verification.",
     }
 
 
