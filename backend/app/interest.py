@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -104,17 +105,47 @@ def _interest_between(
     return total, detail
 
 
-def calculate_account(db: Session, account_id: int, as_of: date | None = None) -> dict:
+def calculate_account(
+    db: Session,
+    account_id: int,
+    as_of: date | None = None,
+    hypothetical_payments: list[dict] | None = None,
+) -> dict:
+    """Replay one account to a date, optionally with in-memory forecast payments.
+
+    Hypothetical payments never enter the SQLAlchemy session or immutable ledger. They are
+    merged into the dated event stream only for this calculation call.
+    """
     account = db.get(Account, account_id)
     if not account:
         raise ValueError("Account not found")
     target = as_of or date.today()
     periods = _rate_periods(db, account)
-    transactions = db.scalars(
+    transactions = list(db.scalars(
         select(LedgerTransaction)
         .where(LedgerTransaction.account_id == account_id, LedgerTransaction.effective_date <= target)
         .order_by(LedgerTransaction.effective_date, LedgerTransaction.id)
-    ).all()
+    ).all())
+
+    max_id = max((item.id for item in transactions), default=0)
+    for index, payment in enumerate(hypothetical_payments or [], start=1):
+        effective_date = payment.get("effective_date")
+        if isinstance(effective_date, str):
+            effective_date = date.fromisoformat(effective_date)
+        if not isinstance(effective_date, date) or effective_date > target:
+            continue
+        transactions.append(SimpleNamespace(
+            id=max_id + index,
+            effective_date=effective_date,
+            transaction_type="payment",
+            direction="credit",
+            amount=money(payment.get("amount", 0)),
+            note=str(payment.get("note") or "Forecast payment"),
+            reverses_transaction_id=None,
+            is_hypothetical=True,
+            forecast_key=str(payment.get("forecast_key") or f"forecast-{index}"),
+        ))
+    transactions.sort(key=lambda item: (item.effective_date, item.id))
 
     if account.start_date and account.start_date > target:
         return {
@@ -224,6 +255,8 @@ def calculate_account(db: Session, account_id: int, as_of: date | None = None) -
             "amount": float(money(item.amount)),
             "note": item.note,
             "reverses_transaction_id": item.reverses_transaction_id,
+            "is_hypothetical": bool(getattr(item, "is_hypothetical", False)),
+            "forecast_key": getattr(item, "forecast_key", ""),
             "interest_accrual_before_transaction": float(money(sum(Decimal(str(row["interest"])) for row in accrual_detail))),
             "interest_segments": accrual_detail,
             "allocated_to_fees": float(money(-deltas["fees"] if deltas["fees"] < 0 else ZERO)),
