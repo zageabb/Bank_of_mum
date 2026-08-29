@@ -9,7 +9,8 @@ export default function Phase6Navigation(){
       const button=target?.closest(".rail button") as HTMLButtonElement|null;
       if(!button)return;
       const label=button.querySelector("small")?.textContent?.trim();
-      const destination=label==="AI"?"/ai":label==="Settings"?"/settings":"";
+      const destinations:Record<string,string>={People:"/manage",Accounts:"/manage",Reports:"/reports",AI:"/ai",Settings:"/settings"};
+      const destination=label?destinations[label]||"":"";
       if(!destination)return;
       event.preventDefault();event.stopPropagation();window.location.href=destination;
     }
