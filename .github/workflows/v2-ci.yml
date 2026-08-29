@@ -9,6 +9,7 @@ on:
       - phase-4-payment-planning
       - phase-5-scenarios
       - phase-6-ai
+      - phase-7-reporting-polish
       - main
   pull_request:
     branches:
@@ -18,6 +19,7 @@ on:
       - phase-3-interest-engine
       - phase-4-payment-planning
       - phase-5-scenarios
+      - phase-6-ai
 
 jobs:
   backend:
