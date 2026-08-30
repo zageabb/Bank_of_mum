@@ -131,9 +131,14 @@ def append_transaction(
     audit_reason: str = "",
 ) -> LedgerTransaction:
     value = money(amount)
-    if value <= 0:
-        raise ValueError("Transaction amount must be greater than zero")
     entry_direction = direction or default_direction(transaction_type)
+    if value < 0:
+        if transaction_type != "payment":
+            raise ValueError("Only payments may use a negative amount")
+        value = abs(value)
+        entry_direction = "debit"
+    if value == 0:
+        raise ValueError("Transaction amount must not be zero")
     if entry_direction not in {"debit", "credit"}:
         raise ValueError("Transaction direction must be debit or credit")
 

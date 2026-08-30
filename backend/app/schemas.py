@@ -20,7 +20,7 @@ SCENARIO_CHANGE_PATTERN = "^(budget_delta|budget_override|lump_sum|payment_holid
 class TransactionCreate(BaseModel):
     effective_date: date
     transaction_type: str = Field(pattern=TRANSACTION_PATTERN)
-    amount: Decimal = Field(gt=0)
+    amount: Decimal
     direction: str | None = Field(default=None, pattern=DIRECTION_PATTERN)
     note: str = ""
     reference: str = ""
@@ -31,7 +31,7 @@ class TransactionCreate(BaseModel):
 class TransactionCorrection(BaseModel):
     effective_date: date
     transaction_type: str = Field(pattern=TRANSACTION_PATTERN)
-    amount: Decimal = Field(gt=0)
+    amount: Decimal
     direction: str | None = Field(default=None, pattern=DIRECTION_PATTERN)
     note: str = ""
     reason: str = Field(min_length=3)

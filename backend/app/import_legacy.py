@@ -152,7 +152,7 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
 
         for index, payment in enumerate(payload.get("payments") or []):
             amount = float(payment.get("amount") or 0)
-            if amount <= 0:
+            if amount == 0:
                 continue
             paid_on = _parse_date(payment.get("date")) or opening_date
             append_transaction(
@@ -160,7 +160,7 @@ def import_legacy_json(db: Session, root: Path | None = None) -> dict:
                 account_id=account.id,
                 effective_date=paid_on,
                 transaction_type="payment",
-                direction="credit",
+                direction="debit" if amount < 0 else "credit",
                 amount=amount,
                 note=str(payment.get("comment") or ""),
                 reference=f"LEGACY-{legacy_id}-PAY-{index + 1}",

@@ -83,6 +83,30 @@ def test_reversal_restores_balance_without_editing_original():
     engine.dispose()
 
 
+def test_negative_payment_is_recorded_as_a_debit():
+    engine, db = make_session()
+    account = make_account(db)
+
+    charge = append_transaction(
+        db,
+        account_id=account.id,
+        effective_date=date(2026, 1, 15),
+        transaction_type="payment",
+        direction="credit",
+        amount=-70,
+        note="Additional borrowing",
+        source="test",
+        created_by="pytest",
+    )
+    db.commit()
+
+    assert charge.amount == 70
+    assert charge.direction == "debit"
+    assert account_balance(db, account.id) == 1070.0
+    assert verify_account_chain(db, account.id)["ok"] is True
+    engine.dispose()
+
+
 def test_correction_posts_reversal_and_replacement_with_audit():
     engine, db = make_session()
     account = make_account(db)
