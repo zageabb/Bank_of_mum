@@ -10,6 +10,7 @@ on:
       - phase-5-scenarios
       - phase-6-ai
       - phase-7-reporting-polish
+      - phase-8-production-hardening
       - main
   pull_request:
     branches:
@@ -20,6 +21,7 @@ on:
       - phase-4-payment-planning
       - phase-5-scenarios
       - phase-6-ai
+      - phase-7-reporting-polish
 
 jobs:
   backend:
@@ -34,7 +36,37 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
+      - run: python -m compileall -q app
       - run: PYTHONPATH=. python -m pytest -q
+      - name: Smoke-start FastAPI and verify probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/bank-of-mum-uvicorn.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/api/health/live >/tmp/live.json; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat /tmp/bank-of-mum-uvicorn.log
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:8000/api/health/ready >/tmp/ready.json
+          python - <<'PY'
+          import json
+          live=json.load(open('/tmp/live.json'))
+          ready=json.load(open('/tmp/ready.json'))
+          assert live['ok'] is True
+          assert live['phase'] == 8
+          assert ready['ok'] is True
+          assert ready['phase'] == 8
+          PY
 
   frontend:
     runs-on: ubuntu-latest

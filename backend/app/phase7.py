@@ -202,7 +202,7 @@ def create_backup(prefix: str = "bank-of-mum") -> Path:
         digest = hashlib.sha256(snapshot.read_bytes()).hexdigest()
         manifest = {
             "app": "Bank of Mum",
-            "phase": 7,
+            "phase": 8,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "database": "bank-of-mum.db",
             "sha256": digest,
@@ -471,7 +471,7 @@ def maintenance_verification(db: Session = Depends(get_db)):
     if failed_hashes:
         warnings.append(f"Ledger hash failures: {len(failed_hashes)}")
     return {
-        "phase": 7,
+        "phase": 8,
         "database_integrity": integrity,
         "ledger_integrity": ledger_checks,
         "counts": {
