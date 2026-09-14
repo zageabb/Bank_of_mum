@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from decimal import Decimal
 
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from .ai import ai_settings_dict, chat_with_tools, list_ollama_models, update_ai_settings
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
+from .diagnostics import application_diagnostics, database_diagnostics
 from .import_legacy import import_legacy_json
 from .interest import calculate_account, rate_period_dict
 from .ledger import (
@@ -65,6 +67,12 @@ run_phase3_schema_migrations(engine)
 with SessionLocal() as _startup_db:
     prepare_phase2_data(_startup_db)
     prepare_phase3_data(_startup_db)
+    _diagnostics = database_diagnostics(_startup_db)
+    _logger = logging.getLogger("uvicorn.error")
+    _logger.info("Bank of Mum database: %s; Accounts found: %s; People found: %s",
+                 _diagnostics["database_path"], _diagnostics["accounts"], _diagnostics["people"])
+    if _diagnostics["warning"]:
+        _logger.warning(_diagnostics["warning"])
 install_immutability_guards(engine)
 
 app = FastAPI(title=settings.app_name, version="2.0.0-phase7")
@@ -139,6 +147,11 @@ def _replace_plan_members(plan: PaymentPlan, validated: list[tuple[Account, int,
             base_payment=base_payment,
             enabled=enabled,
         ))
+
+
+@app.get("/api/diagnostics")
+def diagnostics(db: Session = Depends(get_db)):
+    return application_diagnostics(db)
 
 
 @app.get("/api/health")

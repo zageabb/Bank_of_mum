@@ -30,6 +30,8 @@ Explain calculations in clear UK English and distinguish actual ledger data from
 You are read-only with respect to accounting: never post, edit, reverse or correct ledger transactions and never create contractual interest-rate records.
 You may prepare a DRAFT what-if scenario only when the user asks to model a change. Draft scenarios require human review and do not alter the ledger, contractual rates or baseline payment plan.
 If a tool result is incomplete or an account/plan/scenario is ambiguous, say so rather than guessing.
+If database_empty is true, report that the Bank of Mum database contains no account records. Do not speculate about spelling, account status or dates. Mention any maintenance warning returned by the tool.
+For list_accounts, call the tool immediately when asked to list accounts. Both as_of and status are optional; omit them to use today and all accounts. Do not ask for these optional parameters. Omit status unless the user requests a filter. A filtered count of zero with database_empty false means no matching accounts, not an empty database. Use the returned filter and available_statuses; never invent a status or suggest changing dates to discover records.
 Use concise Markdown. Include dates when discussing balances or forecasts."""
 
 SETTING_DEFAULTS = {
@@ -96,10 +98,31 @@ def update_ai_settings(
     return after
 
 
+def check_ollama_response(response: httpx.Response, model: str = "") -> None:
+    if response.is_success:
+        return
+    try:
+        body = response.json()
+        detail = str(body.get("error") or body.get("detail") or "") if isinstance(body, dict) else str(body)
+    except ValueError:
+        detail = response.text
+    detail = detail.strip()[:1000]
+    lower = detail.lower()
+    if "model" in lower and ("not found" in lower or "does not exist" in lower):
+        explanation = f"Requested Ollama model {model!r} is not installed or available. Select an available model in Settings."
+    elif "support" in lower and any(word in lower for word in ("tool", "chat", "operation")):
+        explanation = f"Ollama model {model!r} does not support the requested operation/tool calling. Choose a tool-capable model."
+    elif response.status_code == 404:
+        explanation = f"Ollama endpoint {response.request.url.path} is unavailable. Check the server URL and Ollama deployment."
+    else:
+        explanation = f"Ollama returned HTTP {response.status_code}."
+    raise httpx.HTTPError(f"{explanation} Ollama error: {detail or 'No error body returned.'}")
+
+
 async def list_ollama_models(base_url: str, timeout_seconds: int = 15) -> list[dict]:
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         response = await client.get(base_url.rstrip("/") + "/api/tags")
-        response.raise_for_status()
+        check_ollama_response(response)
         return [
             {
                 "name": item.get("name", ""),
@@ -128,7 +151,7 @@ AI_TOOLS = [
         "function": {
             "name": "list_accounts",
             "description": "List family lending accounts with current or dated calculated balances.",
-            "parameters": {"type": "object", "properties": {"as_of": {"type": "string"}, "status": {"type": "string"}}},
+            "parameters": {"type": "object", "properties": {"as_of": {"type": "string"}, "status": {"type": "string", "enum": ["all", "active", "paused", "archived", "settled"], "description": "Omit or use all for every account; active means open."}}},
         },
     },
     {
@@ -266,11 +289,22 @@ def execute_ai_tool(
     elif name == "list_accounts":
         target = _parse_date(arguments.get("as_of"), date.today())
         query = select(Account).order_by(Account.person_id, Account.id)
-        if arguments.get("status"):
-            query = query.where(Account.status == str(arguments["status"]))
+        status = str(arguments.get("status") or "all").strip().lower()
+        status = {"open": "active"}.get(status, status)
+        available_statuses = list(db.scalars(select(Account.status).distinct().order_by(Account.status)))
+        if status not in {"all", "active", "paused", "archived", "settled"}:
+            raise ValueError(f"Unsupported account status {status!r}. Use all, active, paused, archived or settled. Available statuses: {available_statuses}")
+        if status != "all":
+            query = query.where(Account.status == status)
+        total = db.scalar(select(func.count(Account.id))) or 0
         rows = list(db.scalars(query).all())
         result = {
             "as_of": target.isoformat(),
+            "count": len(rows),
+            "total_accounts": total,
+            "database_empty": total == 0,
+            "status_filter": status,
+            "available_statuses": available_statuses,
             "accounts": [
                 {
                     "account_id": item.id,
@@ -388,6 +422,12 @@ def execute_ai_tool(
     else:
         raise ValueError(f"Unknown AI tool: {name}")
 
+    if name in {"list_accounts", "get_portfolio_summary"}:
+        from .diagnostics import database_diagnostics
+        diagnostics = database_diagnostics(db)
+        result["database_empty"] = diagnostics["database_empty"]
+        result["warning"] = diagnostics["warning"]
+
     event = {"tool": name, "summary": _tool_summary(name, result)}
     return result, event
 
@@ -428,17 +468,22 @@ async def chat_with_tools(
     configuration = ai_settings_dict(db)
     model = model_override or configuration["ollama_model"]
     url = configuration["ollama_url"].rstrip("/") + "/api/chat"
-    prompt_messages = [{"role": "system", "content": SYSTEM_PROMPT}, *messages]
+    prompt_messages = [{"role": "system", "content": SYSTEM_PROMPT + f"\nToday is {date.today().isoformat()}."}, *messages]
     events: list[dict] = []
     usage = {"input_tokens": 0, "output_tokens": 0}
 
     async with httpx.AsyncClient(timeout=configuration["timeout_seconds"]) as client:
         for _ in range(configuration["max_tool_calls"]):
-            response = await client.post(
-                url,
-                json={"model": model, "messages": prompt_messages, "tools": AI_TOOLS, "stream": False},
-            )
-            response.raise_for_status()
+            try:
+                response = await client.post(
+                    url,
+                    json={"model": model, "messages": prompt_messages, "tools": AI_TOOLS, "stream": False},
+                )
+            except httpx.TimeoutException as exc:
+                raise httpx.HTTPError("Ollama timed out. Check the server and model load, or increase the timeout in Settings.") from exc
+            except httpx.RequestError as exc:
+                raise httpx.HTTPError("Ollama server unavailable. Check the configured URL and network connection.") from exc
+            check_ollama_response(response, model)
             data = response.json()
             usage["input_tokens"] += int(data.get("prompt_eval_count") or 0)
             usage["output_tokens"] += int(data.get("eval_count") or 0)
@@ -475,7 +520,9 @@ async def chat_with_tools(
                     db.rollback()
                     result = {"error": str(exc)}
                     event = {"tool": name, "summary": f"{name} failed: {exc}", "error": str(exc)}
-                events.append(event)
+                # Keep every protocol tool response, but show identical activity only once.
+                if event not in events:
+                    events.append(event)
                 prompt_messages.append({"role": "tool", "tool_name": name, "content": json.dumps(result, default=str)})
 
     reply = "I reached the configured tool-call limit. Review the completed tool activity, then ask me to continue."

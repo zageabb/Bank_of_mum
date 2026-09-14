@@ -216,3 +216,81 @@ def test_scenario_proposal_can_be_disabled_per_chat_request():
 
     assert db.scalar(select(func.count(Scenario.id))) == 0
     engine.dispose()
+
+
+def test_list_accounts_filters_and_empty_database():
+    import pytest
+    engine, db = make_session()
+    result, _ = execute_ai_tool(db, "list_accounts", {}, allow_scenario_proposals=False)
+    assert result["count"] == 0 and result["database_empty"] is True
+    person = Person(name="Family")
+    db.add(person)
+    db.flush()
+    account = make_account(db, person)
+    db.commit()
+    for status in (None, "all", "active", "open", " Active "):
+        result, _ = execute_ai_tool(db, "list_accounts", {"status": status, "as_of": "2026-09-01"}, allow_scenario_proposals=False)
+        assert result["count"] == 1 and result["database_empty"] is False
+        assert result["accounts"][0]["account_id"] == account.id
+        assert result["accounts"][0]["calculation"]["total_balance"] == 1000
+    result, _ = execute_ai_tool(db, "list_accounts", {"status": "settled"}, allow_scenario_proposals=False)
+    assert result["count"] == 0 and result["database_empty"] is False
+    assert result["total_accounts"] == 1
+    with pytest.raises(ValueError, match="Unsupported account status"):
+        execute_ai_tool(db, "list_accounts", {"status": "closed"}, allow_scenario_proposals=False)
+    engine.dispose()
+
+
+def test_ollama_errors_preserve_body():
+    import httpx
+    import pytest
+    from app.ai import check_ollama_response
+    for code, body, expected in [
+        (404, {"error": "model 'missing' not found"}, "not installed"),
+        (400, {"error": "model does not support tools"}, "tool calling"),
+        (500, {"error": "runner failed"}, "runner failed"),
+    ]:
+        response = httpx.Response(code, json=body, request=httpx.Request("POST", "http://ollama/api/chat"))
+        with pytest.raises(httpx.HTTPError, match=expected) as error:
+            check_ollama_response(response, "missing")
+        assert body["error"] in str(error.value)
+    with pytest.raises(httpx.HTTPError, match="endpoint /api/chat is unavailable"):
+        check_ollama_response(httpx.Response(404, text="Not Found", request=httpx.Request("POST", "http://ollama/api/chat")))
+
+
+def test_chat_deduplicates_events_and_keeps_tool_responses(monkeypatch):
+    import asyncio
+    import httpx
+    import app.ai as ai
+    engine, db = make_session()
+    requests = []
+    def handle(request):
+        import json
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            call = {"function": {"name": "list_accounts", "arguments": {}}}
+            return httpx.Response(200, json={"message": {"role": "assistant", "tool_calls": [call, call]}})
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "No account records."}})
+    original = httpx.AsyncClient
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
+    result = asyncio.run(ai.chat_with_tools(db, [{"role": "user", "content": "list accounts"}]))
+    assert len(result["tool_events"]) == 1
+    assert len([m for m in requests[1]["messages"] if m["role"] == "tool"]) == 2
+    engine.dispose()
+
+
+def test_chat_connection_and_timeout_errors(monkeypatch):
+    import asyncio
+    import httpx
+    import pytest
+    import app.ai as ai
+    engine, db = make_session()
+    original = httpx.AsyncClient
+    for error_type, expected in [(httpx.ConnectError, "server unavailable"), (httpx.ReadTimeout, "timed out")]:
+        def handle(request):
+            raise error_type("connection failed", request=request)
+        monkeypatch.setattr(ai.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
+        with pytest.raises(httpx.HTTPError, match=expected):
+            asyncio.run(ai.chat_with_tools(db, [{"role": "user", "content": "list accounts"}]))
+    engine.dispose()

@@ -259,3 +259,42 @@ Particularly sensitive operations:
 - database restore.
 
 The AI tool surface remains read-only for accounting and cannot perform these accounting mutations.
+
+## Database and AI troubleshooting
+
+Relative `BANK_OF_MUM_DATA_ROOT` and `BANK_OF_MUM_LEGACY_DATA_ROOT` paths
+resolve against the backend source directory, independent of the launch working
+directory. The default database is `backend/data-v2/bank-of-mum.db`; `.env` is
+also loaded from `backend/`. Prefer an explicit absolute persistent data root in
+production. Before upgrading a deployment that used relative paths from another
+working directory, set an absolute path to its existing database directory.
+Never move or re-import records merely because a query returns zero results.
+
+`GET /api/diagnostics` reports the connected database path, counts, legacy-file
+availability, version and checked-out Git commit. Settings displays these
+values; the AI page displays empty-database warnings. Startup logs record the
+path and account/person counts. Diagnostics shares the existing maintenance
+API's trusted-network access model; do not expose this API publicly without
+access controls. The commit identifies the checkout; restart after updates.
+
+The inspected Ubuntu deployment (14 September 2026) uses **user systemd** units:
+
+- `systemctl --user status bank-of-mum-api bank-of-mum-web`
+- Backend: `http://127.0.0.1:5082`, frontend: `http://192.168.1.249:5080`
+- Checkout: `/home/zageabb/flask/Bank_of_mum`
+- Database: `/home/zageabb/.local/share/bank-of-mum/v2/bank-of-mum.db`
+- Environment files: `/home/zageabb/.config/bank-of-mum/backend.env` and `frontend.env`
+
+Port 8000 belongs to a separate Ollama Web-Search Agent, and port 5075 belongs
+to Context Studio. The example ports earlier in this document are not the live
+Bank of Mum ports. Check `/api/health` and `/openapi.json` before maintenance.
+The existing live database contains records; no legacy import is needed. A traced
+failed AI call supplied `status: "open"` against rows stored as `active`, which
+explains the zero-account result. This was a filter mismatch, not a missing database.
+
+AI account status filters accept `all`, `active`, `paused`, `archived`, and
+`settled`; omitted status means all. `open` is normalised to `active` for
+compatibility. Invalid filters return an explicit tool error rather than a
+misleading empty list. Results distinguish filtered count from total account
+count and include `database_empty`. Repeated identical activity messages are
+shown once while all tool responses remain in the model conversation.
