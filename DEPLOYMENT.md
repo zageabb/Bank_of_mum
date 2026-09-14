@@ -1,15 +1,42 @@
 # Bank of Mum v2 — Deployment & Recovery Guide
 
+## Ubuntu server deployment
+
+Verified on **14 September 2026** against the listeners, user systemd services,
+Docker port mappings and deployment registry on `192.168.1.249`.
+
+| Endpoint | Host TCP port | LAN URL |
+|---|---:|---|
+| Web | 5080 | http://192.168.1.249:5080/ |
+| API | 5082 | http://192.168.1.249:5082/ |
+
+Checkout: `/home/zageabb/flask/Bank_of_mum`.
+
+These are **user** systemd units. Inspect them with:
+
+```bash
+systemctl --user status bank-of-mum-api.service bank-of-mum-web.service
+systemctl --user cat bank-of-mum-api.service bank-of-mum-web.service
+```
+
+Local verification URL: `http://127.0.0.1:5082/api/health`. HTTP 200 was observed during this audit.
+
+Development defaults and container-internal ports elsewhere in this repository
+may differ from this host deployment. Use the live ports above when accessing
+this Ubuntu server; do not start a second copy on a port already occupied.
+
+[Complete Ubuntu port inventory](https://github.com/zageabb/universal-deployment-agent/blob/main/UBUNTU_PORTS.md).
+
 This guide covers the Phase 7 FastAPI + Next.js application. The legacy Flask application remains in the repository but is not the v2 runtime.
 
 ## Runtime layout
 
 - Backend: FastAPI / SQLAlchemy / SQLite
 - Frontend: Next.js / React
-- Database: `backend/data-v2/bank-of-mum.db` when the backend is started from the `backend` directory with the default configuration
+- Database: `backend/data-v2/bank-of-mum.db` with the default configuration, independent of the launch working directory
 - Backups: `backend/data-v2/backups/`
-- Default frontend port: `5075`
-- Recommended backend port: `8000`
+- Ubuntu frontend port: `5080` (the npm development default remains `5075`)
+- Recommended backend port: `5082`
 - Default Ollama endpoint: `http://192.168.1.249:11434`
 - Default Ollama model: `qwen3:14b`
 
@@ -38,19 +65,19 @@ Start the backend:
 ```bash
 cd backend
 source .venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 5082
 ```
 
 Health check:
 
 ```text
-GET http://SERVER:8000/api/health
+GET http://SERVER:5082/api/health
 ```
 
 Phase 7 integrity check:
 
 ```text
-GET http://SERVER:8000/api/maintenance/verification
+GET http://SERVER:5082/api/maintenance/verification
 ```
 
 ## Frontend install
@@ -62,15 +89,15 @@ cd frontend
 npm install
 cp .env.local.example .env.local
 npm run build
-npm start
+npm start -- --hostname 0.0.0.0 --port 5080
 ```
 
-The frontend listens on port `5075`.
+The frontend listens on port `5080`.
 
 Set `NEXT_PUBLIC_API_URL` to the browser-reachable backend URL, for example:
 
 ```env
-NEXT_PUBLIC_API_URL=http://192.168.1.50:8000/api
+NEXT_PUBLIC_API_URL=http://192.168.1.249:5082/api
 ```
 
 Do not use `localhost` in the frontend environment when users access the browser from another machine unless the backend is running on that same client machine.
@@ -84,14 +111,17 @@ Common variables:
 ```env
 BANK_OF_MUM_DATA_ROOT=data-v2
 BANK_OF_MUM_LEGACY_DATA_ROOT=../data
-BANK_OF_MUM_CORS_ORIGINS=http://localhost:5075,http://192.168.1.50:5075
+BANK_OF_MUM_CORS_ORIGINS=http://localhost:5080,http://192.168.1.249:5080
 BANK_OF_MUM_OLLAMA_URL=http://192.168.1.249:11434
 BANK_OF_MUM_OLLAMA_MODEL=qwen3:14b
 ```
 
 Keep `BANK_OF_MUM_DATA_ROOT` on persistent storage.
 
-## Recommended Linux systemd units
+## Example system-wide units for a new host
+
+The existing Ubuntu server uses the user units documented above. These `/opt`
+examples are for provisioning another host and should not replace those units.
 
 ### Backend
 
@@ -107,7 +137,7 @@ Type=simple
 User=bankofmum
 WorkingDirectory=/opt/bank-of-mum/backend
 EnvironmentFile=/opt/bank-of-mum/backend/.env
-ExecStart=/opt/bank-of-mum/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/bank-of-mum/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 5082
 Restart=on-failure
 RestartSec=3
 
@@ -129,7 +159,7 @@ Type=simple
 User=bankofmum
 WorkingDirectory=/opt/bank-of-mum/frontend
 EnvironmentFile=/opt/bank-of-mum/frontend/.env.local
-ExecStart=/usr/bin/npm start
+ExecStart=/usr/bin/npm start -- --hostname 0.0.0.0 --port 5080
 Restart=on-failure
 RestartSec=3
 
@@ -239,10 +269,10 @@ If a restored backup contains application settings from an older point in time, 
 
 ## Reverse proxy
 
-For a LAN deployment, the simplest option is to expose ports 5075 and 8000 directly. For a single hostname, place nginx/Caddy/Traefik in front and route:
+For a LAN deployment, the simplest option is to expose ports 5080 and 5082 directly. For a single hostname, place nginx/Caddy/Traefik in front and route:
 
-- `/api/*` → FastAPI port 8000
-- everything else → Next.js port 5075
+- `/api/*` → FastAPI port 5082
+- everything else → Next.js port 5080
 
 When using a reverse proxy, set `NEXT_PUBLIC_API_URL` to the externally visible `/api` URL and include the frontend origin in `BANK_OF_MUM_CORS_ORIGINS` if backend and frontend remain cross-origin.
 
@@ -286,8 +316,7 @@ The inspected Ubuntu deployment (14 September 2026) uses **user systemd** units:
 - Environment files: `/home/zageabb/.config/bank-of-mum/backend.env` and `frontend.env`
 
 Port 8000 belongs to a separate Ollama Web-Search Agent, and port 5075 belongs
-to Context Studio. The example ports earlier in this document are not the live
-Bank of Mum ports. Check `/api/health` and `/openapi.json` before maintenance.
+to Context Studio. The examples above now use the live Bank of Mum ports. Check `/api/health` and `/openapi.json` before maintenance.
 The existing live database contains records; no legacy import is needed. A traced
 failed AI call supplied `status: "open"` against rows stored as `active`, which
 explains the zero-account result. This was a filter mismatch, not a missing database.
