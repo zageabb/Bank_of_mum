@@ -4,8 +4,11 @@ import math
 import calendar
 from datetime import date, datetime
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, abort
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+# Trust only isolated UDA/Caddy ingress for forwarded application mount.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_prefix=1)
 
 DATA_DIR = os.path.join(app.root_path, 'data')
 IGNORED_LOAN_IDS = {"alice", "bob"}
