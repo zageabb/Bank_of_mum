@@ -127,9 +127,9 @@ export default function ScenariosPage(){
 
   return <div className="scenario-page"><div className="scenario-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">BM</span><span>Bank of Mum</span></div><div className="workspace-title">Family accounting workspace <span>Phase 5 · what-if scenarios</span></div><div className={`connection ${bootstrap?"online":""}`}><i/>{bootstrap?"Connected":"Connecting"}</div></header>
-    <aside className="scenario-rail"><a href="/"><span>D</span><small>Dashboard</small></a><a href="/"><span>F</span><small>Forecast</small></a><a href="/scenarios" className="active"><span>S</span><small>Scenarios</small></a><a href="/"><span>A</span><small>Audit</small></a></aside>
+    <aside className="scenario-rail"><a href="./"><span>D</span><small>Dashboard</small></a><a href="./"><span>F</span><small>Forecast</small></a><a href="./scenarios" className="active"><span>S</span><small>Scenarios</small></a><a href="./"><span>A</span><small>Audit</small></a></aside>
     <main className="scenario-workspace">
-      <section className="page-head"><div><p className="eyebrow">BANK OF MUM</p><h1>Scenarios</h1><p>Compare temporary changes against the saved baseline without altering ledger history.</p></div><a className="primary" href="/">Back to workspace</a></section>
+      <section className="page-head"><div><p className="eyebrow">BANK OF MUM</p><h1>Scenarios</h1><p>Compare temporary changes against the saved baseline without altering ledger history.</p></div><a className="primary" href="./">Back to workspace</a></section>
       {error&&<div className="notice error">{error}</div>}{notice&&<div className="notice success">{notice}</div>}
       <div className="non-destructive-banner">Scenario payments and rates exist only inside the deterministic forecast replay. They never become ledger transactions or contractual rate records.</div>
       <div style={{height:16}}/>

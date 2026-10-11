@@ -14,12 +14,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Phase6Navigation />
         {children}
         <nav className="phase6-shortcuts phase7-shortcuts" aria-label="Bank of Mum shortcuts">
-          <a href="/manage">People & Accounts</a>
-          <a href="/reports">Reports</a>
-          <a href="/scenarios">Scenarios</a>
-          <a href="/ai">AI</a>
-          <a href="/maintenance">Maintenance</a>
-          <a href="/settings">Settings</a>
+          <a href="./manage">People & Accounts</a>
+          <a href="./reports">Reports</a>
+          <a href="./scenarios">Scenarios</a>
+          <a href="./ai">AI</a>
+          <a href="./maintenance">Maintenance</a>
+          <a href="./settings">Settings</a>
         </nav>
       </body>
     </html>
