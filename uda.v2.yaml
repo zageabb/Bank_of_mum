@@ -21,7 +21,6 @@ builds:
     commands:
       - ["npm", "ci"]
       - ["npm", "run", "build"]
-    output_dir: frontend/.next
 services:
   - name: api
     role: web
