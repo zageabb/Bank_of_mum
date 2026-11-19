@@ -1,0 +1,85 @@
+# DEV-020 review-only. Source startup performs database writes/migrations;
+# production activation and rollback must remain blocked pending review.
+schema_version: 2
+application:
+  name: bank-of-mum
+  kind: web
+  display_name: Bank of Mum
+source:
+  repository: zageabb/Bank_of_mum
+  branch: main
+builds:
+  - name: backend-deps
+    toolchain: python
+    working_dir: backend
+    commands:
+      - ["python3", "-m", "venv", ".venv"]
+      - [".venv/bin/python", "-m", "pip", "install", "-r", "requirements.txt"]
+  - name: frontend-build
+    toolchain: node
+    working_dir: frontend
+    commands:
+      - ["npm", "ci"]
+      - ["npm", "run", "build"]
+services:
+  - name: api
+    role: web
+    runtime: python
+    working_dir: backend
+    entrypoint: [".venv/bin/uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "5082"]
+    port: 5082
+    restart: on-failure
+    required_builds: [backend-deps]
+    health:
+      type: http
+      path: /api/health
+    environment_refs: [BANK_OF_MUM_DATA_ROOT]
+  - name: web
+    role: web
+    runtime: node
+    working_dir: frontend
+    entrypoint: ["npm", "start", "--", "--hostname", "127.0.0.1", "--port", "5080"]
+    port: 5080
+    depends_on: [api]
+    restart: on-failure
+    required_builds: [frontend-build]
+    health:
+      type: http
+      path: /
+    environment_refs: [NEXT_PUBLIC_BASE_PATH, NEXT_PUBLIC_API_URL]
+health:
+  aggregate: all-required
+  required_services: [api, web]
+  on_optional_failure: degraded
+  startup_timeout_seconds: 180
+proxy:
+  enabled: true
+  upstream: web
+  canonical_path: /apps/bank-of-mum/
+  authentication: uda
+  routes:
+    - subpath: api/
+      upstream: api
+      prefix_mode: strip
+      authentication: uda
+environment:
+  required: [BANK_OF_MUM_DATA_ROOT, NEXT_PUBLIC_BASE_PATH, NEXT_PUBLIC_API_URL]
+  definitions:
+    - name: BANK_OF_MUM_DATA_ROOT
+      source: config
+      phase: runtime
+    - name: NEXT_PUBLIC_BASE_PATH
+      source: config
+      phase: all
+    - name: NEXT_PUBLIC_API_URL
+      source: config
+      phase: all
+deployment:
+  strategy: systemd
+  approval: explicit
+  auto_update: false
+  rollback: false
+  github_reporting: false
+  restart_order: [api, web]
+lifecycle:
+  owner: bank-of-mum
